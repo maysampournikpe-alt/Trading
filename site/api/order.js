@@ -8,7 +8,7 @@ module.exports = guard(async (req, res) => {
   if (side !== "buy" && side !== "sell") return res.status(400).json({ error: "side must be buy or sell" });
   const now = Date.now();
   while (recent.length && now - recent[0] > 60000) recent.shift();
-  if (recent.length >= 20) return res.status(429).json({ error: "too many orders this minute" });
+  if (recent.length >= 40) return res.status(429).json({ error: "too many orders this minute" });
 
   const [account, positions] = await Promise.all([alpaca(TRADING, "/account"), alpaca(TRADING, "/positions")]);
   const held = Number((positions.find(p => p.symbol === symbol) || {}).qty || 0);
@@ -16,7 +16,10 @@ module.exports = guard(async (req, res) => {
   if (side === "buy") {
     const usd = Number(b.notional);
     if (!(usd >= 1 && usd <= MAX_ORDER_USD)) return res.status(400).json({ error: `notional must be between $1 and $${MAX_ORDER_USD}` });
-    if (usd > Number(account.cash) * 0.5) return res.status(400).json({ error: "order is more than half the cash" });
+    const equity = Number(account.equity);
+    if (Number(account.cash) - usd < equity * 0.10) return res.status(400).json({ error: "risk: would dip into the 10% cash buffer" });
+    const cur = Number((positions.find(p => p.symbol === symbol) || {}).market_value || 0);
+    if ((cur + usd) / equity > 0.25) return res.status(400).json({ error: "risk: position would exceed 25% of equity" });
     order.notional = usd.toFixed(2);
   } else {
     const qty = Number(b.qty);
