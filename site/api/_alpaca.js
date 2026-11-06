@@ -4,7 +4,7 @@ const LIVE = process.env.ALPACA_MODE === "live";
 const TRADING = LIVE ? "https://api.alpaca.markets/v2" : "https://paper-api.alpaca.markets/v2";
 const DAILY_LOSS_PCT = Number(process.env.DAILY_LOSS_PCT || 3); // buys stop when equity is this % below yesterday's close
 const DATA = "https://data.alpaca.markets/v2";
-const SYMBOLS = ["AAPL", "AXP", "GOOGL", "KO", "BAC"];
+const SYMBOLS = ["AAPL", "AXP", "GOOGL", "KO", "BAC", "SPY"];
 const MAX_ORDER_USD = Number(process.env.MAX_ORDER_USD || 500);
 
 function authorized(req) {

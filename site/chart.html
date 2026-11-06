@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tick Chart Trader</title>
+<style>
+:root{--bg:#fafaf8;--fg:#1a1a18;--mute:#62625c;--card:#fff;--line:#e4e4de;--accent:#0b6b4f;--up:#089981;--down:#f23645;--blue:#2962ff}
+@media (prefers-color-scheme:dark){:root{--bg:#121413;--fg:#ecece8;--mute:#9a9a92;--card:#1b1d1c;--line:#2c2f2d;--accent:#4fd1a1;--up:#22ab94;--down:#f7525f;--blue:#5b8cff}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:0 16px 48px}
+h1{font-size:1.6rem;margin:24px 0 4px}h2{font-size:1.05rem;margin:0 0 8px}
+.mute{color:var(--mute)}a{color:var(--accent)}
+.warn{border:1px solid var(--line);border-left:4px solid var(--accent);background:var(--card);padding:10px 14px;border-radius:8px;margin:12px 0;font-size:.88rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:end}
+label{display:flex;flex-direction:column;font-size:.78rem;color:var(--mute);gap:3px}
+input,select{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:inherit}
+input{width:120px}
+button{background:var(--accent);color:var(--bg);border:0;border-radius:8px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer}
+button.sec{background:transparent;color:var(--fg);border:1px solid var(--line)}
+.head{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline;margin-bottom:8px}
+.head .sym{font-weight:700;font-size:1.15rem}
+.ohlc{font-variant-numeric:tabular-nums;font-size:.92rem}
+.trade{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+.qbtn{border-radius:8px;padding:4px 14px;text-align:center;cursor:pointer;background:var(--card);font-variant-numeric:tabular-nums;line-height:1.25;min-width:96px}
+.qbtn b{display:block;font-size:1.05rem}.qbtn span{font-size:.75rem;letter-spacing:.05em}
+.sell{border:2px solid var(--down);color:var(--down)}.buy{border:2px solid var(--blue);color:var(--blue)}
+#chart{height:460px;width:100%}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+.stat b{display:block;font-size:1.15rem;font-variant-numeric:tabular-nums}.stat span{font-size:.75rem;color:var(--mute)}
+.pos{color:var(--up)}.neg{color:var(--down)}
+#log{max-height:240px;overflow:auto;font:.8rem/1.5 ui-monospace,Menlo,monospace}
+#log div{padding:2px 0;border-bottom:1px dashed var(--line)}
+@media (max-width:600px){#chart{height:340px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<p style="margin-top:18px"><a href="/">&larr; Trader Skills</a> &middot; <a href="/trade.html">Paper desk</a> &middot; <a href="/live.html">Live trader</a></p>
+<h1>Tick Chart Trader</h1>
+<div class="warn"><b>Fake money.</b> Prices update tick by tick. By default the ticks are <b>simulated</b>; enter your trader passcode to stream <b>real</b> quotes and 1-minute bars from Alpaca (IEX feed, needs the Alpaca keys on the server). Buys fill at the ask and sells at the bid, so the spread costs you, just like a real market. The bot follows the skills' rules: trader-risk limits (10% cash buffer, 25% max position, $10 minimum, daily order cap) and trader-budget sizing (20% of equity per trade). Not financial advice.</div>
+
+<div class="card">
+  <div class="row">
+    <label>Symbol<select id="sym"></select></label>
+    <label>Data<select id="src"><option value="sim">Simulated ticks</option><option value="real">Real (Alpaca)</option></select></label>
+    <label id="passWrap" hidden>Passcode<input id="pass" type="password" autocomplete="off"></label>
+    <label>Order $<input id="qty" type="number" value="1000" min="10" step="100"></label>
+    <button id="bot">Start bot</button>
+    <button id="reset" class="sec">Reset account</button>
+  </div>
+  <p id="msg" class="mute" style="margin:8px 0 0;font-size:.85rem"></p>
+</div>
+
+<div class="card">
+  <div class="head"><span class="sym" id="title"></span><span class="ohlc" id="ohlc"></span></div>
+  <div class="trade">
+    <div class="qbtn sell" id="sellBtn" role="button" tabindex="0"><b id="bid">-</b><span>SELL</span></div>
+    <span class="mute" id="spread" style="font-variant-numeric:tabular-nums">-</span>
+    <div class="qbtn buy" id="buyBtn" role="button" tabindex="0"><b id="ask">-</b><span>BUY</span></div>
+    <span class="mute" style="font-size:.82rem">Click SELL or BUY to trade the order amount by hand, or let the bot trade.</span>
+  </div>
+  <div id="chart"></div>
+  <p class="mute" style="margin:6px 0 0;font-size:.75rem">Charts by <a href="https://www.tradingview.com/lightweight-charts/" target="_blank" rel="noopener">TradingView Lightweight Charts</a> (Apache-2.0).</p>
+</div>
+
+<div class="card"><div class="stats" id="stats"></div></div>
+<div class="card"><h2>Activity</h2><div id="log"></div></div>
+</div>
+<script src="/vendor/lightweight-charts-4.2.0.js"></script>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const SYMS={SPY:{n:"SPDR S&P 500 ETF Trust",px:735.30},AAPL:{n:"Apple",px:341.27},AXP:{n:"American Express",px:309.84},GOOGL:{n:"Alphabet",px:353.78},KO:{n:"Coca-Cola",px:90.11},BAC:{n:"Bank of America",px:53.96}};
+// bot rules: tick mean reversion, sized and limited by the trader-budget / trader-risk defaults
+const BOT={win:120,minTicks:40,entryZ:-1.8,exitZ:0.3,tp:0.0008,sl:-0.0008,maxHoldS:300,coolS:30,size:0.20};
+const RISK={cashBuffer:0.10,maxPos:0.25,minOrder:10,maxOrdersPerDay:300};
+const TZ=-new Date().getTimezoneOffset()*60; // show candles in local time
+const money=x=>(x<0?"-":"")+"$"+Math.abs(x).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const fx=(x,d=2)=>Number(x).toFixed(d);
+
+// ---------- account (fake money, saved in this browser) ----------
+const AKEY="chartAcct.v1";
+function fresh(){return{cash:10000,start:10000,pos:{},last:{},realized:0,orders:0,day:new Date().toDateString(),wins:0,closed:0,log:[]}}
+let A=(()=>{try{return JSON.parse(localStorage.getItem(AKEY))||fresh()}catch(e){return fresh()}})();
+function saveA(){try{localStorage.setItem(AKEY,JSON.stringify(A))}catch(e){}}
+function log(m,c){A.log.unshift({t:new Date().toLocaleTimeString(),m,c});A.log=A.log.slice(0,200);renderLog()}
+function renderLog(){$("log").innerHTML=A.log.map(e=>`<div class="${e.c||""}">${e.t}  ${e.m.replace(/</g,"&lt;")}</div>`).join("")}
+function equity(){let e=A.cash;for(const[s,p]of Object.entries(A.pos))e+=p.sh*(A.last[s]||p.avg);return e}
+
+// ---------- chart ----------
+const css=getComputedStyle(document.documentElement),cv=n=>css.getPropertyValue(n).trim();
+const chart=LightweightCharts.createChart($("chart"),{autoSize:true,
+  layout:{background:{type:"solid",color:cv("--card")},textColor:cv("--mute")},
+  grid:{vertLines:{color:cv("--line"),style:1},horzLines:{color:cv("--line"),style:1}},
+  rightPriceScale:{borderColor:cv("--line")},timeScale:{borderColor:cv("--line"),timeVisible:true,secondsVisible:false},
+  crosshair:{mode:0}});
+const candles=chart.addCandlestickSeries({upColor:cv("--up"),downColor:cv("--down"),borderVisible:false,wickUpColor:cv("--up"),wickDownColor:cv("--down")});
+const vols=chart.addHistogramSeries({priceFormat:{type:"volume"},priceScaleId:"vol"});
+chart.priceScale("vol").applyOptions({scaleMargins:{top:0.82,bottom:0}});
+let bars=[],cur=null,markers=[],avgLine=null;
+function colorOf(b){return b.close>=b.open?cv("--up")+"80":cv("--down")+"80"}
+function setBars(list){
+  bars=list;cur=bars[bars.length-1]||null;
+  candles.setData(bars.map(b=>({time:b.time,open:b.open,high:b.high,low:b.low,close:b.close})));
+  vols.setData(bars.map(b=>({time:b.time,value:b.volume||0,color:colorOf(b)})));
+  markers=[];candles.setMarkers([]);chart.timeScale().scrollToRealTime();
+}
+function addTickToCandle(sec,price,vol){
+  const t=Math.floor((sec+TZ)/60)*60;
+  if(cur&&t<cur.time)return; // late tick
+  if(!cur||t>cur.time){cur={time:t,open:cur?cur.close:price,high:price,low:price,close:price,volume:0};bars.push(cur);if(bars.length>2000)bars.shift()}
+  cur.high=Math.max(cur.high,price);cur.low=Math.min(cur.low,price);cur.close=price;cur.volume+=vol||0;
+  candles.update({time:cur.time,open:cur.open,high:cur.high,low:cur.low,close:cur.close});
+  vols.update({time:cur.time,value:cur.volume,color:colorOf(cur)});
+}
+function mark(side,why){
+  if(!cur)return;
+  markers.push({time:cur.time,position:side==="buy"?"belowBar":"aboveBar",color:side==="buy"?cv("--blue"):cv("--down"),shape:side==="buy"?"arrowUp":"arrowDown",text:(side==="buy"?"B":"S")+(why?" "+why:"")});
+  candles.setMarkers(markers.slice(-200));
+}
+function drawAvg(){
+  if(avgLine){candles.removePriceLine(avgLine);avgLine=null}
+  const p=A.pos[SYM];if(p&&p.sh>1e-9)avgLine=candles.createPriceLine({price:p.avg,color:cv("--blue"),lineStyle:2,lineWidth:1,axisLabelVisible:true,title:"Avg "+fx(p.sh,4)+" sh"});
+}
+
+// ---------- orders (fill at bid / ask) with trader-risk checks ----------
+let BID=0,ASK=0,MID=0;
+function riskBlock(side,usd){
+  if(A.day!==new Date().toDateString()){A.day=new Date().toDateString();A.orders=0}
+  if(usd<RISK.minOrder)return "below the $"+RISK.minOrder+" minimum order";
+  if(A.orders>=RISK.maxOrdersPerDay)return "daily order limit reached";
+  if(side==="buy"){
+    const eq=equity(),p=A.pos[SYM];
+    if(A.cash-usd<eq*RISK.cashBuffer)return "would dip into the "+RISK.cashBuffer*100+"% cash buffer";
+    if(((p?p.sh*BID:0)+usd)/eq>RISK.maxPos+1e-9)return "position would be over "+RISK.maxPos*100+"% of equity";
+  }else{
+    const p=A.pos[SYM];if(!p||p.sh*BID<usd-0.01)return "no short selling: not enough shares";
+  }
+  return null;
+}
+function fill(side,usd,why,by){
+  if(!BID)return false;
+  const b=riskBlock(side,usd);
+  if(b){log(`BLOCK ${side} ${SYM} ${money(usd)}: ${b}`,"neg");return false}
+  const now=Date.now()/1000;
+  if(side==="buy"){
+    const sh=usd/ASK,p=A.pos[SYM]||(A.pos[SYM]={sh:0,avg:0,since:now});
+    p.avg=(p.avg*p.sh+usd)/(p.sh+sh);p.sh+=sh;if(!p.since)p.since=now;A.cash-=usd;
+    log(`${by} BUY ${fx(sh,4)} ${SYM} @ ${fx(ASK)} (${money(usd)})${why?" - "+why:""}`,"pos");
+  }else{
+    const p=A.pos[SYM],sh=Math.min(p.sh,usd/BID),gain=sh*(BID-p.avg);
+    p.sh-=sh;A.cash+=sh*BID;A.realized+=gain;A.closed++;if(gain>0)A.wins++;
+    if(p.sh<1e-6)delete A.pos[SYM];
+    log(`${by} SELL ${fx(sh,4)} ${SYM} @ ${fx(BID)} (${gain>=0?"+":""}${money(gain)})${why?" - "+why:""}`,gain>=0?"pos":"neg");
+  }
+  A.orders++;mark(side,by==="BOT"?"":"you");drawAvg();saveA();render();return true;
+}
+$("buyBtn").onclick=()=>fill("buy",+$("qty").value||0,"","YOU");
+$("sellBtn").onclick=()=>{const p=A.pos[SYM];fill("sell",Math.min(+$("qty").value||0,p?p.sh*BID:0)||+$("qty").value||0,"","YOU")};
+
+// ---------- bot: decides on every tick ----------
+let botOn=false,ticks=[],cool=0;
+function botTick(){
+  ticks.push(MID);if(ticks.length>BOT.win)ticks.shift();
+  if(!botOn||ticks.length<BOT.minTicks)return;
+  const m=ticks.reduce((a,b)=>a+b,0)/ticks.length,sd=Math.sqrt(ticks.reduce((a,b)=>a+(b-m)*(b-m),0)/ticks.length),z=sd>0?(MID-m)/sd:0;
+  const p=A.pos[SYM],now=Date.now()/1000;
+  if(p&&p.sh>1e-9){
+    const ret=(BID-p.avg)/p.avg,age=now-(p.since||now);
+    const why=ret>=BOT.tp?"take profit":ret<=BOT.sl?"stop loss":age>=BOT.maxHoldS?"time stop":z>=BOT.exitZ?"back to average":null;
+    if(why&&fill("sell",p.sh*BID,why+" "+(ret*100).toFixed(3)+"%","BOT"))cool=now+BOT.coolS;
+  }else if(z<=BOT.entryZ&&now>=cool){
+    const usd=Math.floor(equity()*BOT.size);
+    if(fill("buy",usd,"dip z="+z.toFixed(2),"BOT")&&A.pos[SYM])A.pos[SYM].since=now;else cool=now+5;
+  }
+}
+$("bot").onclick=()=>{botOn=!botOn;$("bot").textContent=botOn?"Stop bot":"Start bot";log(botOn?"bot started on "+SYM:"bot stopped")};
+
+// ---------- data feeds ----------
+let SYM="SPY",feed=null;
+function onQuote(bid,ask,vol){
+  BID=bid;ASK=ask;MID=(bid+ask)/2;A.last[SYM]=BID;
+  addTickToCandle(Date.now()/1000,MID,vol);botTick();render();
+}
+// simulated: a random walk ticking twice a second, with a realistic spread
+function simFeed(){
+  const base=A.last[SYM]||SYMS[SYM].px,step=0.00012;
+  let mid=base;const list=[],now=Math.floor(Date.now()/1000/60)*60;
+  let p=base;for(let i=240;i>0;i--){ // 4 hours of 1-minute history
+    const o=p,c=o*(1+(Math.random()-.5)*2*step*Math.sqrt(120)*0.6);
+    const h=Math.max(o,c)*(1+Math.random()*step*4),l=Math.min(o,c)*(1-Math.random()*step*4);
+    list.push({time:now-i*60+TZ,open:o,high:h,low:l,close:c,volume:Math.round(20000+Math.random()*200000)});p=c;
+  }
+  const k=base/p;list.forEach(b=>{b.open*=k;b.high*=k;b.low*=k;b.close*=k}); // end exactly at the current price
+  setBars(list);mid=list[list.length-1].close;
+  const id=setInterval(()=>{
+    mid*=1+((Math.random()+Math.random()+Math.random()-1.5)*2*step);
+    const half=Math.max(0.005,mid*0.00005);
+    onQuote(mid-half,mid+half,Math.round(50+Math.random()*1500));
+  },500);
+  return()=>clearInterval(id);
+}
+async function api(path){
+  const r=await fetch("/api/"+path,{headers:{"x-trader-passcode":$("pass").value}});
+  const j=await r.json().catch(()=>({error:"bad response"}));if(!r.ok)throw new Error(j.error||("HTTP "+r.status));return j;
+}
+function realFeed(){
+  let stop=false,timer=null,refresh=null;
+  (async()=>{
+    try{
+      const h=await api("bars?symbol="+SYM+"&limit=400");
+      if(stop)return;
+      setBars(h.bars.map(b=>({...b,time:b.time+TZ})));
+      $("msg").textContent="Real data: "+h.bars.length+" one-minute bars from Alpaca (IEX). Quotes update every second.";
+      const poll=async()=>{try{const q=await api("quotes?symbols="+SYM),x=q.quotes[SYM];if(x&&!stop)onQuote(x.bid,x.ask,0)}catch(e){$("msg").textContent="Quote error: "+e.message}};
+      poll();timer=setInterval(poll,1000);
+      refresh=setInterval(async()=>{try{const r=await api("bars?symbol="+SYM+"&limit=2");for(const b of r.bars){const t=b.time+TZ;if(cur&&t===cur.time){cur.volume=b.volume;vols.update({time:t,value:b.volume,color:colorOf(cur)})}}}catch(e){}},30000);
+    }catch(e){$("msg").textContent="Could not load real data: "+e.message+". Showing simulated ticks instead.";$("src").value="sim";start()}
+  })();
+  return()=>{stop=true;clearInterval(timer);clearInterval(refresh)};
+}
+function start(){
+  if(feed)feed();ticks=[];BID=ASK=MID=0;
+  $("title").textContent=SYM+" · "+SYMS[SYM].n+" · 1m";
+  $("passWrap").hidden=$("src").value!=="real";
+  if($("src").value==="real"){if(!$("pass").value){$("msg").textContent="Enter your trader passcode to stream real data.";feed=null;return}feed=realFeed()}
+  else{$("msg").textContent="Simulated ticks (twice a second). Choose Real (Alpaca) for live market data.";feed=simFeed()}
+  drawAvg();
+}
+
+// ---------- display ----------
+function render(){
+  if(cur){const first=bars[0],chg=cur.close-first.open,c=chg>=0?"pos":"neg";
+    $("ohlc").innerHTML=`O<b class="${c}">${fx(cur.open)}</b> H<b class="${c}">${fx(cur.high)}</b> L<b class="${c}">${fx(cur.low)}</b> C<b class="${c}">${fx(cur.close)}</b> <b class="${c}">${chg>=0?"+":""}${fx(chg)} (${chg>=0?"+":""}${fx(chg/first.open*100)}%)</b>`}
+  if(BID){$("bid").textContent=fx(BID);$("ask").textContent=fx(ASK);$("spread").textContent=fx(ASK-BID)}
+  const eq=equity(),pl=eq-A.start,p=A.pos[SYM],open=p?p.sh*(BID-p.avg):0;
+  $("stats").innerHTML=[["Equity",money(eq)],["Total P/L",`<span class="${pl>=0?"pos":"neg"}">${money(pl)}</span>`],["Cash",money(A.cash)],
+    [SYM+" position",p?fx(p.sh,4)+" sh":"none"],["Open P/L",`<span class="${open>=0?"pos":"neg"}">${money(open)}</span>`],["Realized",money(A.realized)],
+    ["Orders today",A.orders],["Win rate",A.closed?Math.round(A.wins/A.closed*100)+"% of "+A.closed:"n/a"]]
+    .map(([k,v])=>`<div class="stat"><span>${k}</span><b>${v}</b></div>`).join("");
+}
+Object.keys(SYMS).forEach(s=>$("sym").insertAdjacentHTML("beforeend",`<option value="${s}">${s} - ${SYMS[s].n}</option>`));
+$("sym").onchange=()=>{SYM=$("sym").value;start()};
+$("src").onchange=start;
+$("pass").onchange=start;
+$("reset").onclick=()=>{if(!confirm("Reset the fake-money account to $10,000?"))return;A=fresh();saveA();renderLog();drawAvg();markers=[];candles.setMarkers([]);render()};
+renderLog();start();render();
+</script>
+</body>
+</html>
