@@ -1,6 +1,8 @@
-// Shared helpers for the live paper trader. PAPER ACCOUNT ONLY: the trading host is hard-coded.
+// Shared helpers for the live trader. Paper by default; real money only when ALPACA_MODE=live is set on the server.
 const crypto = require("crypto");
-const TRADING = "https://paper-api.alpaca.markets/v2";
+const LIVE = process.env.ALPACA_MODE === "live";
+const TRADING = LIVE ? "https://api.alpaca.markets/v2" : "https://paper-api.alpaca.markets/v2";
+const DAILY_LOSS_PCT = Number(process.env.DAILY_LOSS_PCT || 3); // buys stop when equity is this % below yesterday's close
 const DATA = "https://data.alpaca.markets/v2";
 const SYMBOLS = ["AAPL", "AXP", "GOOGL", "KO", "BAC"];
 const MAX_ORDER_USD = Number(process.env.MAX_ORDER_USD || 500);
@@ -34,4 +36,4 @@ function guard(fn) {
     catch (e) { res.status(e.status && e.status < 600 ? e.status : 500).json({ error: e.message }); }
   };
 }
-module.exports = { TRADING, DATA, SYMBOLS, MAX_ORDER_USD, alpaca, guard };
+module.exports = { LIVE, DAILY_LOSS_PCT, TRADING, DATA, SYMBOLS, MAX_ORDER_USD, alpaca, guard };

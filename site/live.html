@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Live Paper Trader</title>
+<title>Live Trader</title>
 <style>
 :root{--bg:#fafaf8;--fg:#1a1a18;--mute:#62625c;--card:#fff;--line:#e4e4de;--accent:#0b6b4f;--bad:#b3261e}
 @media (prefers-color-scheme:dark){:root{--bg:#121413;--fg:#ecece8;--mute:#9a9a92;--card:#1b1d1c;--line:#2c2f2d;--accent:#4fd1a1;--bad:#ff8a80}}
@@ -33,9 +33,10 @@ th:first-child,td:first-child{text-align:left}
 <body>
 <div class="wrap">
 <p style="margin-top:20px"><a href="/">&larr; Trader Skills</a> &middot; <a href="/trade.html">Simulated desk</a></p>
-<h1>Live Paper Trader</h1>
-<p class="mute">A fast short-term trader on your Alpaca <b>paper</b> account, using real-time quotes (IEX feed) every 2 seconds, with the trader-risk and trader-budget limits applied to every order.</p>
-<div class="warn"><b>Paper money only.</b> The server is hard-wired to Alpaca's paper endpoint and cannot reach a live account. Fast trading is not a reliable way to make money: most short-term traders lose, spreads and the IEX-only feed work against you, and a profitable day here proves nothing. Runs only while this tab is open. Not financial advice.</div>
+<h1>Live Trader</h1>
+<div id="mode" class="warn" style="display:none"></div>
+<p class="mute">A fast short-term trader on your Alpaca account, using real-time quotes (IEX feed) every 2 seconds, with the trader-risk and trader-budget limits applied to every order.</p>
+<div class="warn"><b>Paper by default; real money when the server is set to live.</b> Fast trading is not a reliable way to make money: most short-term traders lose, spreads and the IEX-only feed work against you, and a profitable day here proves nothing. Runs only while this tab is open. Not financial advice.</div>
 
 <div class="card">
   <div class="row">
@@ -67,7 +68,12 @@ async function api(path,opt){
   const j=await r.json().catch(()=>({error:"bad response"}));
   if(!r.ok)throw new Error(j.error||("HTTP "+r.status));return j;
 }
+function showMode(a){
+  const m=$("mode");m.style.display="block";
+  if(a.live){m.style.borderLeftColor="var(--bad)";m.innerHTML="<b>LIVE MODE: REAL MONEY.</b> Orders go to your real Alpaca account and fill at real prices. Buying halts automatically if the account falls "+a.daily_loss_pct+"% in a day. Use Sell everything to exit."}
+  else m.innerHTML="<b>Paper mode.</b> Orders go to your Alpaca paper account. Set ALPACA_MODE=live on the server (with live keys) for real money."}
 function stats(a){
+  showMode(a);
   const pl=startEq==null?0:a.equity-startEq;
   $("stats").innerHTML=[["Equity",money(a.equity)],["Session P/L",`<span class="${pl>=0?"pos":"neg"}">${money(pl)}</span>`],["Cash",money(a.cash)],
    ["Market",a.market_open?"open":"closed"],["Trades",trades],["Win rate",closed?Math.round(wins/closed*100)+"% ("+closed+")":"n/a"]]
@@ -140,7 +146,7 @@ $("go").onclick=async()=>{
     $("toggle").disabled=$("flat").disabled=false;clearInterval(timer);timer=setInterval(tick,P.pollMs);tick();
   }catch(e){$("msg").textContent="Could not connect: "+e.message}
 };
-$("toggle").onclick=()=>{run=!run;$("toggle").textContent=run?"Pause trading":"Start trading";log(run?"trading started":"trading paused");};
+$("toggle").onclick=()=>{if(!run&&acct&&acct.live&&!confirm("Start trading with REAL MONEY? Orders will fill in your live Alpaca account."))return;run=!run;$("toggle").textContent=run?"Pause trading":"Start trading";log(run?"trading started":"trading paused");};
 $("flat").onclick=async()=>{
   stop();if(!acct)return;log("selling everything");
   for(const p of acct.positions)await order({symbol:p.symbol,side:"sell",qty:p.qty},"manual flatten");

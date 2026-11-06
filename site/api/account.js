@@ -1,9 +1,9 @@
-const { TRADING, alpaca, guard } = require("./_alpaca");
+const { LIVE, DAILY_LOSS_PCT, TRADING, alpaca, guard } = require("./_alpaca");
 module.exports = guard(async (req, res) => {
   const [account, positions, clock] = await Promise.all([
     alpaca(TRADING, "/account"), alpaca(TRADING, "/positions"), alpaca(TRADING, "/clock")]);
   res.status(200).json({
-    paper: true,
+    paper: !LIVE, live: LIVE, daily_loss_pct: DAILY_LOSS_PCT,
     equity: Number(account.equity), last_equity: Number(account.last_equity), cash: Number(account.cash),
     buying_power: Number(account.buying_power), market_open: clock.is_open, next_open: clock.next_open, next_close: clock.next_close,
     positions: positions.map(p => ({ symbol: p.symbol, qty: Number(p.qty), avg: Number(p.avg_entry_price),
