@@ -34,7 +34,7 @@ th:first-child,td:first-child{text-align:left}
 <div class="wrap">
 <p style="margin-top:20px"><a href="/">&larr; Trader Skills</a> &middot; <a href="/trade.html">Simulated desk</a></p>
 <h1>Live Paper Trader</h1>
-<p class="mute">A fast short-term trader on your Alpaca <b>paper</b> account, using real-time quotes (IEX feed).</p>
+<p class="mute">A fast short-term trader on your Alpaca <b>paper</b> account, using real-time quotes (IEX feed) every 2 seconds, with the trader-risk and trader-budget limits applied to every order.</p>
 <div class="warn"><b>Paper money only.</b> The server is hard-wired to Alpaca's paper endpoint and cannot reach a live account. Fast trading is not a reliable way to make money: most short-term traders lose, spreads and the IEX-only feed work against you, and a profitable day here proves nothing. Runs only while this tab is open. Not financial advice.</div>
 
 <div class="card">
@@ -55,10 +55,11 @@ th:first-child,td:first-child{text-align:left}
 <script>
 "use strict";
 const $=id=>document.getElementById(id),SY=["AAPL","AXP","GOOGL","KO","BAC"];
-const P={win:60,minSamples:20,entryZ:-1.5,exitZ:0.5,takeProfit:0.0025,stop:-0.004,maxHoldMs:10*60e3,
-  cooldownMs:60e3,maxSpread:0.003,maxPositions:3,maxTradesPerDay:40,pollMs:4000};
+const P={win:30,minSamples:15,entryZ:-1.3,exitZ:0.3,takeProfit:0.0015,stop:-0.0025,maxHoldMs:3*60e3,
+  cooldownMs:20e3,maxSpread:0.0025,maxPositions:4,maxTradesPerDay:150,pollMs:2000,acctEvery:3,
+  cashBuffer:0.10,maxPosPct:0.25}; // risk limits mirror trader-risk / trader-budget defaults
 const money=x=>(x<0?"-":"")+"$"+Math.abs(x).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
-let pass="",acct=null,run=false,busy=false,hist={},last={},entered={},cool={},trades=0,wins=0,closed=0,startEq=null,timer=null;
+let ticks=0,pass="",acct=null,run=false,busy=false,hist={},last={},entered={},cool={},trades=0,wins=0,closed=0,startEq=null,timer=null;
 SY.forEach(s=>hist[s]=[]);
 function log(m,c){const d=document.createElement("div");d.className=c||"";d.textContent=new Date().toLocaleTimeString()+"  "+m;$("log").prepend(d);while($("log").children.length>200)$("log").lastChild.remove()}
 async function api(path,opt){
@@ -74,6 +75,16 @@ function stats(a){
   $("pos").innerHTML="<tr><th>Ticker</th><th>Qty</th><th>Avg</th><th>Price</th><th>Value</th><th>P/L</th></tr>"+
     (a.positions.map(p=>`<tr><td>${p.symbol}</td><td>${p.qty}</td><td>${money(p.avg)}</td><td>${money(p.price)}</td><td>${money(p.value)}</td><td class="${p.pl>=0?"pos":"neg"}">${money(p.pl)}</td></tr>`).join("")||'<tr><td colspan="6" class="mute">No open positions</td></tr>');
 }
+const riskNoted={};
+// trader-risk rules: minimum order, cash buffer, max position size, daily order limit
+function riskBlock(a,s,usd){
+  if(usd<10)return "below the $10 minimum order";
+  if(a.cash-usd<a.equity*P.cashBuffer)return "would dip into the "+P.cashBuffer*100+"% cash buffer";
+  const cur=(a.positions.find(p=>p.symbol===s)||{value:0}).value;
+  if((cur+usd)/a.equity>P.maxPosPct)return "position would exceed "+P.maxPosPct*100+"% of equity";
+  if(trades>=P.maxTradesPerDay)return "daily order limit reached";
+  return null;
+}
 function zscore(s){
   const h=hist[s];if(h.length<P.minSamples)return null;
   const m=h.reduce((x,y)=>x+y,0)/h.length,sd=Math.sqrt(h.reduce((x,y)=>x+(y-m)*(y-m),0)/h.length);
@@ -87,7 +98,8 @@ async function order(body,why){
 async function tick(){
   if(busy)return;busy=true;
   try{
-    const [q,a]=await Promise.all([api("quotes"),api("account")]);
+    const needAcct=!acct||ticks++%P.acctEvery===0;
+    const [q,a]=await Promise.all([api("quotes"),needAcct?api("account"):Promise.resolve(acct)]);
     acct=a;if(startEq==null)startEq=a.equity;
     const now=Date.now(),rows=[];
     for(const s of SY){
@@ -109,7 +121,9 @@ async function tick(){
           closed++;if(ret>0)wins++;cool[s]=now+P.cooldownMs;delete entered[s];delete held[s]}
       }else if(z<=P.entryZ&&sp<=P.maxSpread&&(cool[s]||0)<now&&!pending(s)&&SY.filter(k=>held[k]||pending(k)).length<P.maxPositions&&trades<P.maxTradesPerDay){
         const usd=Math.min(+$("size").value||200,500);
-        if(await order({symbol:s,side:"buy",notional:usd},`dip z=${z.toFixed(2)}`)){entered[s]=now}
+        const why2=riskBlock(a,s,usd);
+        if(why2){if(!riskNoted[s]||now-riskNoted[s]>30000){riskNoted[s]=now;log(`RISK BLOCK buy ${s} $${usd}: ${why2}`,"neg")}}
+        else if(await order({symbol:s,side:"buy",notional:usd},`dip z=${z.toFixed(2)}`)){entered[s]=now}
       }
     }
     $("q").innerHTML="<tr><th>Ticker</th><th>Bid</th><th>Ask</th><th>Spread</th><th>z-score</th></tr>"+rows.join("");
