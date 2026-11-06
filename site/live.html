@@ -16,6 +16,7 @@ h1{font-size:1.8rem;margin:32px 0 6px}h2{font-size:1.1rem;margin:0 0 10px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px;overflow-x:auto}
 .row{display:flex;flex-wrap:wrap;gap:10px;align-items:end}
 label{display:flex;flex-direction:column;font-size:.8rem;color:var(--mute);gap:3px}
+select{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 9px;font:inherit}
 input{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:inherit;width:150px}
 button{background:var(--accent);color:var(--bg);border:0;border-radius:8px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer}
 button.sec{background:transparent;color:var(--fg);border:1px solid var(--line)}
@@ -41,11 +42,13 @@ th:first-child,td:first-child{text-align:left}
 <div class="card">
   <div class="row">
     <label>Passcode<input id="pass" type="password" autocomplete="off"></label>
+    <label>Horizon<select id="horizon"><option value="short">Short term (minutes)</option><option value="medium">Medium term (hours to days)</option><option value="long">Long term (buy and hold)</option></select></label>
     <label>$ per trade (max 500)<input id="size" type="number" value="200" min="10" max="500" step="10"></label>
     <button id="go">Connect</button>
     <button id="toggle" class="sec" disabled>Start trading</button>
     <button id="flat" class="sec" disabled>Sell everything</button>
   </div>
+  <p id="horizonNote" class="mute" style="margin:10px 0 0;font-size:.85rem"></p>
   <p id="msg" class="mute" style="margin:10px 0 0;font-size:.85rem">Enter the passcode you set as TRADER_PASSCODE on the server.</p>
 </div>
 <div class="card"><div class="stats" id="stats"></div></div>
@@ -56,11 +59,19 @@ th:first-child,td:first-child{text-align:left}
 <script>
 "use strict";
 const $=id=>document.getElementById(id),SY=["AAPL","AXP","GOOGL","KO","BAC"];
-const P={win:30,minSamples:15,entryZ:-1.3,exitZ:0.3,takeProfit:0.0015,stop:-0.0025,maxHoldMs:3*60e3,
-  cooldownMs:20e3,maxSpread:0.0025,maxPositions:4,maxTradesPerDay:150,pollMs:2000,acctEvery:3,
-  cashBuffer:0.10,maxPosPct:0.25}; // risk limits mirror trader-risk / trader-budget defaults
+// risk limits mirror trader-risk / trader-budget defaults and apply to every horizon
+const RISK={cashBuffer:0.10,maxPosPct:0.25};
+const H={
+  short:{label:"Short term",note:"Scalps small dips and sells within minutes: +0.15% take profit, -0.25% stop, 3-minute time stop. Checks quotes every 2 seconds.",
+    mode:"dip",win:30,minSamples:15,entryZ:-1.3,exitZ:0.3,takeProfit:0.0015,stop:-0.0025,maxHoldMs:3*60e3,cooldownMs:20e3,maxSpread:0.0025,maxPositions:4,maxTradesPerDay:150,pollMs:2000,acctEvery:3},
+  medium:{label:"Medium term",note:"Swing trades: buys bigger dips (z-score -2 over the last hour) and holds for hours to 3 days: +1.5% take profit, -1% stop, 3-day time stop. Checks every 30 seconds.",
+    mode:"dip",win:120,minSamples:60,entryZ:-2,exitZ:1,takeProfit:0.015,stop:-0.01,maxHoldMs:3*864e5,cooldownMs:30*60e3,maxSpread:0.003,maxPositions:4,maxTradesPerDay:40,pollMs:30000,acctEvery:1},
+  long:{label:"Long term",note:"Buy and hold: builds a Berkshire-style portfolio (the copycat targets, capped at 25% a stock, 10% cash) and then only rebalances when a stock drifts 5 points off target. No stop-loss. Checks every 30 seconds.",
+    mode:"hold",band:5,maxTradesPerDay:400,pollMs:30000,acctEvery:1,minSamples:0,win:2}};
+const WEIGHTS=[30.67,23.85,17.56,15.11,12.80]; // AAPL AXP GOOGL KO BAC, from the skills' bundled 13F data
+let P=Object.assign({},RISK,H.short);
 const money=x=>(x<0?"-":"")+"$"+Math.abs(x).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
-let ticks=0,pass="",acct=null,run=false,busy=false,hist={},last={},entered={},cool={},trades=0,wins=0,closed=0,startEq=null,timer=null;
+let ticks=0,pass="",acct=null,run=false,busy=false,hist={},last={},entered=(()=>{try{return JSON.parse(localStorage.getItem("liveEntered"))||{}}catch(e){return {}}})(),cool={},trades=0,wins=0,closed=0,startEq=null,timer=null;
 SY.forEach(s=>hist[s]=[]);
 function log(m,c){const d=document.createElement("div");d.className=c||"";d.textContent=new Date().toLocaleTimeString()+"  "+m;$("log").prepend(d);while($("log").children.length>200)$("log").lastChild.remove()}
 async function api(path,opt){
@@ -82,6 +93,37 @@ function stats(a){
     (a.positions.map(p=>`<tr><td>${p.symbol}</td><td>${p.qty}</td><td>${money(p.avg)}</td><td>${money(p.price)}</td><td>${money(p.value)}</td><td class="${p.pl>=0?"pos":"neg"}">${money(p.pl)}</td></tr>`).join("")||'<tr><td colspan="6" class="mute">No open positions</td></tr>');
 }
 const riskNoted={};
+// long term: copy the target weights, build the positions in steps, rebalance only outside the band
+function targetWeights(capFrac){
+  let w=WEIGHTS.map(x=>x/100),capped=new Set();
+  for(let i=0;i<10;i++){
+    let over=false;
+    w.forEach((x,k)=>{if(!capped.has(k)&&x>capFrac+1e-9){w[k]=capFrac;capped.add(k);over=true}});
+    if(!over)break;
+    const fixed=[...capped].reduce((t,k)=>t+w[k],0),free=w.reduce((t,x,k)=>capped.has(k)?t:t+WEIGHTS[k]/100,0);
+    w=w.map((x,k)=>capped.has(k)?x:WEIGHTS[k]/100/free*(1-fixed));
+  }
+  return w;
+}
+async function holdRebalance(a,now,pending){
+  const w=targetWeights(P.maxPosPct/(1-P.cashBuffer)),eq=a.equity;
+  const invested=a.positions.filter(p=>SY.includes(p.symbol)).reduce((t,p)=>t+p.value,0);
+  const building=invested<0.95*eq*(1-P.cashBuffer); // first build: fill to within 1 point; afterwards only the 5-point band
+  for(let i=0;i<SY.length;i++){
+    const s=SY[i],x=last[s];if(!x||pending(s)||trades>=P.maxTradesPerDay)continue;
+    const tgt=w[i]*eq*(1-P.cashBuffer),pos=a.positions.find(p=>p.symbol===s),cur=pos?pos.value:0,drift=(cur-tgt)/eq*100;
+    if(Math.abs(drift)<=(building&&drift<0?1:P.band))continue;
+    if(drift<0){ // under target: buy toward it, at most the per-trade size each poll
+      const usd=Math.min(Math.floor(tgt-cur),500); // server cap per order; big targets are built over several polls
+      const why=riskBlock(a,s,usd);
+      if(why){if(!riskNoted[s]||now-riskNoted[s]>60000){riskNoted[s]=now;log(`RISK BLOCK buy ${s} $${usd}: ${why}`,"neg")}}
+      else if(await order({symbol:s,side:"buy",notional:usd},`building toward target, ${drift.toFixed(1)} pts under`)){entered[s]=now}
+    }else if(pos){ // over target: sell the excess
+      const qty=Math.min(pos.qty,Math.floor((cur-tgt)/x.bid*1e4)/1e4);
+      if(qty>0)await order({symbol:s,side:"sell",qty},`rebalance, ${drift.toFixed(1)} pts over`);
+    }
+  }
+}
 // trader-risk rules: minimum order, cash buffer, max position size, daily order limit
 function riskBlock(a,s,usd){
   if(usd<10)return "below the $10 minimum order";
@@ -96,6 +138,7 @@ function zscore(s){
   const m=h.reduce((x,y)=>x+y,0)/h.length,sd=Math.sqrt(h.reduce((x,y)=>x+(y-m)*(y-m),0)/h.length);
   return sd>0?(h[h.length-1]-m)/sd:0;
 }
+function persist(){try{localStorage.setItem("liveEntered",JSON.stringify(entered))}catch(e){}}
 async function order(body,why){
   try{const r=await api("order",{method:"POST",body:JSON.stringify(body)});trades++;
     log(`${body.side.toUpperCase()} ${body.symbol} ${body.notional?"$"+body.notional:body.qty+" sh"} (${why}) -> ${r.status}`,"pos");return true}
@@ -115,11 +158,12 @@ async function tick(){
     const held=Object.fromEntries(a.positions.map(p=>[p.symbol,p]));
     // a buy takes a moment to show up as a position: count it as pending so it is not bought twice
     for(const s of Object.keys(entered)){if(!held[s]&&now-entered[s]>30000)delete entered[s]}
+    for(const s of Object.keys(held)){if(!entered[s])entered[s]=now} // positions from an earlier session: hold clock starts when first seen
     const pending=s=>!held[s]&&entered[s]&&now-entered[s]<=30000;
     for(const s of SY){
       const x=last[s];if(!x)continue;const z=zscore(s),sp=(x.ask-x.bid)/x.mid,p=held[s];
       rows.push(`<tr><td>${s}</td><td>${money(x.bid)}</td><td>${money(x.ask)}</td><td>${(sp*100).toFixed(2)}%</td><td>${z==null?"warming up ("+hist[s].length+"/"+P.minSamples+")":z.toFixed(2)}</td></tr>`);
-      if(!run||!a.market_open||z==null)continue;
+      if(P.mode==="hold"||!run||!a.market_open||z==null)continue;
       if(p){ // exit rules
         const ret=(x.bid-p.avg)/p.avg,age=now-(entered[s]||now);
         const why=ret>=P.takeProfit?"take profit":ret<=P.stop?"stop loss":age>=P.maxHoldMs?"time stop":z>=P.exitZ?"reverted to mean":null;
@@ -132,6 +176,8 @@ async function tick(){
         else if(await order({symbol:s,side:"buy",notional:usd},`dip z=${z.toFixed(2)}`)){entered[s]=now}
       }
     }
+    if(P.mode==="hold"&&run&&a.market_open)await holdRebalance(a,now,pending);
+    persist();
     $("q").innerHTML="<tr><th>Ticker</th><th>Bid</th><th>Ask</th><th>Spread</th><th>z-score</th></tr>"+rows.join("");
     stats(a);
     if(run&&!a.market_open)$("msg").textContent="Market is closed. Waiting for the open ("+(a.next_open||"")+").";
@@ -139,11 +185,22 @@ async function tick(){
   busy=false;
 }
 function stop(){run=false;$("toggle").textContent="Start trading";}
+function startPolling(){clearInterval(timer);if(acct)timer=setInterval(tick,P.pollMs)}
+function setHorizon(k){
+  P=Object.assign({},RISK,H[k]);hist={};SY.forEach(s=>hist[s]=[]);cool={};
+  $("horizonNote").textContent=H[k].label+": "+H[k].note;
+  log("horizon set to "+H[k].label.toLowerCase());startPolling();if(acct)tick();
+}
+$("horizon").onchange=()=>{
+  if(run){$("horizon").value=Object.keys(H).find(k=>H[k].label===P.label)||"short";log("pause trading before changing the horizon","neg");return}
+  setHorizon($("horizon").value);
+};
+$("horizonNote").textContent=H.short.label+": "+H.short.note;
 $("go").onclick=async()=>{
   pass=$("pass").value;$("msg").textContent="Connecting...";
   try{const a=await api("account");acct=a;startEq=a.equity;stats(a);
     $("msg").textContent="Connected to your Alpaca paper account ("+(a.market_open?"market open":"market closed")+"). Quotes are polled every "+P.pollMs/1000+"s.";
-    $("toggle").disabled=$("flat").disabled=false;clearInterval(timer);timer=setInterval(tick,P.pollMs);tick();
+    $("toggle").disabled=$("flat").disabled=false;startPolling();tick();
   }catch(e){$("msg").textContent="Could not connect: "+e.message}
 };
 $("toggle").onclick=()=>{if(!run&&acct&&acct.live&&!confirm("Start trading with REAL MONEY? Orders will fill in your live Alpaca account."))return;run=!run;$("toggle").textContent=run?"Pause trading":"Start trading";log(run?"trading started":"trading paused");};
