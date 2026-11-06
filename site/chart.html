@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tick Chart Trader</title>
+<style>
+:root{--bg:#fafaf8;--fg:#1a1a18;--mute:#62625c;--card:#fff;--line:#e4e4de;--accent:#0b6b4f;--up:#089981;--down:#f23645;--blue:#2962ff}
+@media (prefers-color-scheme:dark){:root{--bg:#121413;--fg:#ecece8;--mute:#9a9a92;--card:#1b1d1c;--line:#2c2f2d;--accent:#4fd1a1;--up:#22ab94;--down:#f7525f;--blue:#5b8cff}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:0 16px 48px}
+h1{font-size:1.6rem;margin:24px 0 4px}h2{font-size:1.05rem;margin:0 0 8px}
+.mute{color:var(--mute)}a{color:var(--accent)}
+.warn{border:1px solid var(--line);border-left:4px solid var(--accent);background:var(--card);padding:10px 14px;border-radius:8px;margin:12px 0;font-size:.88rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:end}
+label{display:flex;flex-direction:column;font-size:.78rem;color:var(--mute);gap:3px}
+input,select{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:inherit}
+input{width:120px}
+button{background:var(--accent);color:var(--bg);border:0;border-radius:8px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer}
+button.sec{background:transparent;color:var(--fg);border:1px solid var(--line)}
+.head{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline;margin-bottom:8px}
+.head .sym{font-weight:700;font-size:1.15rem}
+.ohlc{font-variant-numeric:tabular-nums;font-size:.92rem}
+.trade{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+.qbtn{border-radius:8px;padding:4px 14px;text-align:center;cursor:pointer;background:var(--card);font-variant-numeric:tabular-nums;line-height:1.25;min-width:96px}
+.qbtn b{display:block;font-size:1.05rem}.qbtn span{font-size:.75rem;letter-spacing:.05em}
+.sell{border:2px solid var(--down);color:var(--down)}.buy{border:2px solid var(--blue);color:var(--blue)}
+#chart{height:460px;width:100%}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+.stat b{display:block;font-size:1.15rem;font-variant-numeric:tabular-nums}.stat span{font-size:.75rem;color:var(--mute)}
+.pos{color:var(--up)}.neg{color:var(--down)}
+#btTable th,#btTable td{text-align:right;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}#btTable th:first-child,#btTable td:first-child,#btTable th:last-child{text-align:left}
+#log{max-height:240px;overflow:auto;font:.8rem/1.5 ui-monospace,Menlo,monospace}
+#log div{padding:2px 0;border-bottom:1px dashed var(--line)}
+@media (max-width:600px){#chart{height:340px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<p style="margin-top:18px"><a href="/">&larr; Trader Skills</a> &middot; <a href="/trade.html">Paper desk</a> &middot; <a href="/live.html">Live trader</a></p>
+<h1>Tick Chart Trader</h1>
+<div class="warn"><b>Fake money.</b> Prices update tick by tick. By default the ticks are <b>simulated</b>; enter your trader passcode to stream <b>real</b> quotes and 1-minute bars from Alpaca (IEX feed, needs the Alpaca keys on the server). Buys fill at the ask and sells at the bid, so the spread costs you, just like a real market. The bot follows the skills' rules (trader-risk: 10% cash buffer, 25% max position, $10 minimum, daily order cap) plus the risk rules day-trading research and educators agree on: risk at most 1% of equity per trade, sized from the stop distance, and stop for the day after a 2% loss. None of these strategies has reliable evidence of beating the market after costs. Not financial advice.</div>
+
+<div class="card">
+  <div class="row">
+    <label>Symbol<select id="sym"></select></label>
+    <label>Data<select id="src"><option value="sim">Simulated ticks</option><option value="real">Real (Alpaca)</option></select></label>
+    <label id="passWrap" hidden>Passcode<input id="pass" type="password" autocomplete="off"></label>
+    <label>Order $<input id="qty" type="number" value="1000" min="10" step="100"></label>
+    <label>Bot strategy<select id="strat">
+      <option value="smc">Liquidity sweep + FVG (TJR-style)</option>
+      <option value="orb">Opening range breakout (5 min)</option>
+      <option value="mom">Intraday momentum (last half hour)</option>
+      <option value="mr">Tick mean reversion (scalp)</option>
+    </select></label>
+    <label style="flex-direction:row;align-items:center;gap:6px;color:var(--fg);font-size:.85rem"><input id="vwapF" type="checkbox" style="width:auto"> Only buy above VWAP</label>
+    <label style="flex-direction:row;align-items:center;gap:6px;color:var(--fg);font-size:.85rem"><input id="fomcF" type="checkbox" style="width:auto" checked> Sit out Fed decisions</label>
+    <label style="flex-direction:row;align-items:center;gap:6px;color:var(--fg);font-size:.85rem"><input id="senti" type="checkbox" style="width:auto"> StockTwits sentiment filter</label>
+    <button id="bot">Start bot</button>
+    <button id="reset" class="sec">Reset account</button>
+  </div>
+  <p id="stratNote" class="mute" style="margin:8px 0 0;font-size:.85rem"></p>
+  <p id="msg" class="mute" style="margin:4px 0 0;font-size:.85rem"></p>
+</div>
+
+<div class="card">
+  <div class="head"><span class="sym" id="title"></span><span class="ohlc" id="ohlc"></span></div>
+  <div class="trade">
+    <div class="qbtn sell" id="sellBtn" role="button" tabindex="0"><b id="bid">-</b><span>SELL</span></div>
+    <span class="mute" id="spread" style="font-variant-numeric:tabular-nums">-</span>
+    <div class="qbtn buy" id="buyBtn" role="button" tabindex="0"><b id="ask">-</b><span>BUY</span></div>
+    <span class="mute" style="font-size:.82rem">Click SELL or BUY to trade the order amount by hand, or let the bot trade.</span>
+  </div>
+  <div id="chart"></div>
+  <p class="mute" style="margin:6px 0 0;font-size:.75rem">Charts by <a href="https://www.tradingview.com/lightweight-charts/" target="_blank" rel="noopener">TradingView Lightweight Charts</a> (Apache-2.0).</p>
+</div>
+
+<div class="card"><div class="stats" id="stats"></div></div>
+<div class="card">
+  <h2>Backtest: does it actually work?</h2>
+  <p class="mute" style="margin:0 0 10px;font-size:.85rem">Runs the exact same rules and filters as the bot over past 1-minute bars, with trading costs, and compares each strategy with simply buying and holding. Real data needs the passcode (Data: Real). On simulated data the result only shows what costs do to random prices.</p>
+  <div class="row">
+    <label>History<select id="btDays"><option value="5">5 days</option><option value="20" selected>20 days</option><option value="45">45 days</option></select></label>
+    <label>Cost per side (%)<input id="btCost" type="number" value="0.02" min="0" step="0.01"></label>
+    <button id="btRun">Test all strategies</button>
+  </div>
+  <p id="btMsg" class="mute" style="margin:8px 0 0;font-size:.85rem"></p>
+  <div style="overflow-x:auto"><table id="btTable" style="border-collapse:collapse;width:100%;font-size:.86rem;margin-top:8px"></table></div>
+</div>
+<div class="card"><h2>Activity</h2><div id="log"></div></div>
+</div>
+<script src="/vendor/lightweight-charts-4.2.0.js"></script>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const SYMS={SPY:{n:"SPDR S&P 500 ETF Trust",px:735.30},AAPL:{n:"Apple",px:341.27},AXP:{n:"American Express",px:309.84},GOOGL:{n:"Alphabet",px:353.78},KO:{n:"Coca-Cola",px:90.11},BAC:{n:"Bank of America",px:53.96}};
+// bot rules: tick mean reversion, sized and limited by the trader-budget / trader-risk defaults
+const BOT={win:120,minTicks:40,entryZ:-1.8,exitZ:0.3,tp:0.0008,sl:-0.0008,maxHoldS:300,coolS:30,size:0.20};
+const RISK={cashBuffer:0.10,maxPos:0.25,minOrder:10,maxOrdersPerDay:300,riskPerTrade:0.01,dailyLoss:0.02};
+const TZ=-new Date().getTimezoneOffset()*60; // show candles in local time
+const money=x=>(x<0?"-":"")+"$"+Math.abs(x).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const fx=(x,d=2)=>Number(x).toFixed(d);
+
+// ---------- account (fake money, saved in this browser) ----------
+const AKEY="chartAcct.v1";
+function fresh(){return{cash:10000,start:10000,pos:{},last:{},realized:0,orders:0,day:new Date().toDateString(),wins:0,closed:0,log:[]}}
+let A=(()=>{try{return JSON.parse(localStorage.getItem(AKEY))||fresh()}catch(e){return fresh()}})();
+function saveA(){try{localStorage.setItem(AKEY,JSON.stringify(A))}catch(e){}}
+function log(m,c){A.log.unshift({t:new Date().toLocaleTimeString(),m,c});A.log=A.log.slice(0,200);renderLog()}
+function renderLog(){$("log").innerHTML=A.log.map(e=>`<div class="${e.c||""}">${e.t}  ${e.m.replace(/</g,"&lt;")}</div>`).join("")}
+function equity(){let e=A.cash;for(const[s,p]of Object.entries(A.pos))e+=p.sh*(A.last[s]||p.avg);return e}
+
+// ---------- chart ----------
+const css=getComputedStyle(document.documentElement),cv=n=>css.getPropertyValue(n).trim();
+const chart=LightweightCharts.createChart($("chart"),{autoSize:true,
+  layout:{background:{type:"solid",color:cv("--card")},textColor:cv("--mute")},
+  grid:{vertLines:{color:cv("--line"),style:1},horzLines:{color:cv("--line"),style:1}},
+  rightPriceScale:{borderColor:cv("--line")},timeScale:{borderColor:cv("--line"),timeVisible:true,secondsVisible:false},
+  crosshair:{mode:0}});
+const candles=chart.addCandlestickSeries({upColor:cv("--up"),downColor:cv("--down"),borderVisible:false,wickUpColor:cv("--up"),wickDownColor:cv("--down")});
+const vols=chart.addHistogramSeries({priceFormat:{type:"volume"},priceScaleId:"vol"});
+chart.priceScale("vol").applyOptions({scaleMargins:{top:0.82,bottom:0}});
+const vwapSeries=chart.addLineSeries({color:"#f59e0b",lineWidth:1,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false,title:"VWAP"});
+function drawVwap(){ // recompute the session VWAP line for the visible bars
+  const pts=[];let d=null,pv=0,v=0,sp=0,k=0;
+  for(const b of bars){const e=etBar(b);if(e.day!==d){d=e.day;pv=v=sp=k=0}if(e.min<570)continue;
+    const tp=(b.high+b.low+b.close)/3;pv+=tp*(b.volume||0);v+=b.volume||0;sp+=tp;k++;pts.push({time:b.time,value:v>0?pv/v:sp/k})}
+  vwapSeries.setData(pts);
+}
+let bars=[],cur=null,markers=[],avgLine=null;
+function colorOf(b){return b.close>=b.open?cv("--up")+"80":cv("--down")+"80"}
+function setBars(list){
+  bars=list;cur=bars[bars.length-1]||null;
+  candles.setData(bars.map(b=>({time:b.time,open:b.open,high:b.high,low:b.low,close:b.close})));
+  vols.setData(bars.map(b=>({time:b.time,value:b.volume||0,color:colorOf(b)})));
+  markers=[];candles.setMarkers([]);drawVwap();chart.timeScale().scrollToRealTime();
+}
+function addTickToCandle(sec,price,vol){
+  const t=Math.floor((sec+TZ)/60)*60;
+  if(cur&&t<cur.time)return; // late tick
+  if(cur&&t>cur.time)onBarClose(); // the previous candle just closed
+  if(!cur||t>cur.time){cur={time:t,open:cur?cur.close:price,high:price,low:price,close:price,volume:0};bars.push(cur);if(bars.length>2000)bars.shift()}
+  cur.high=Math.max(cur.high,price);cur.low=Math.min(cur.low,price);cur.close=price;cur.volume+=vol||0;
+  candles.update({time:cur.time,open:cur.open,high:cur.high,low:cur.low,close:cur.close});
+  vols.update({time:cur.time,value:cur.volume,color:colorOf(cur)});
+}
+function mark(side,why){
+  if(!cur)return;
+  markers.push({time:cur.time,position:side==="buy"?"belowBar":"aboveBar",color:side==="buy"?cv("--blue"):cv("--down"),shape:side==="buy"?"arrowUp":"arrowDown",text:(side==="buy"?"B":"S")+(why?" "+why:"")});
+  candles.setMarkers(markers.slice(-200));
+}
+function drawAvg(){
+  if(avgLine){candles.removePriceLine(avgLine);avgLine=null}
+  const p=A.pos[SYM];if(p&&p.sh>1e-9)avgLine=candles.createPriceLine({price:p.avg,color:cv("--blue"),lineStyle:2,lineWidth:1,axisLabelVisible:true,title:"Avg "+fx(p.sh,4)+" sh"});
+}
+
+// ---------- orders (fill at bid / ask) with trader-risk checks ----------
+let BID=0,ASK=0,MID=0;
+function riskBlock(side,usd){
+  if(A.day!==new Date().toDateString()){A.day=new Date().toDateString();A.orders=0}
+  if(usd<RISK.minOrder)return "below the $"+RISK.minOrder+" minimum order";
+  if(A.orders>=RISK.maxOrdersPerDay)return "daily order limit reached";
+  if(side==="buy"){
+    const eq=equity(),p=A.pos[SYM];
+    if(A.cash-usd<eq*RISK.cashBuffer)return "would dip into the "+RISK.cashBuffer*100+"% cash buffer";
+    if(((p?p.sh*BID:0)+usd)/eq>RISK.maxPos+1e-9)return "position would be over "+RISK.maxPos*100+"% of equity";
+  }else{
+    const p=A.pos[SYM];if(!p||p.sh*BID<usd-0.01)return "no short selling: not enough shares";
+  }
+  return null;
+}
+function fill(side,usd,why,by){
+  if(!BID)return false;
+  const b=riskBlock(side,usd);
+  if(b){log(`BLOCK ${side} ${SYM} ${money(usd)}: ${b}`,"neg");return false}
+  const now=Date.now()/1000;
+  if(side==="buy"){
+    const sh=usd/ASK,p=A.pos[SYM]||(A.pos[SYM]={sh:0,avg:0,since:now});
+    p.avg=(p.avg*p.sh+usd)/(p.sh+sh);p.sh+=sh;if(!p.since)p.since=now;A.cash-=usd;
+    log(`${by} BUY ${fx(sh,4)} ${SYM} @ ${fx(ASK)} (${money(usd)})${why?" - "+why:""}`,"pos");
+  }else{
+    const p=A.pos[SYM],sh=Math.min(p.sh,usd/BID),gain=sh*(BID-p.avg);
+    p.sh-=sh;A.cash+=sh*BID;A.realized+=gain;A.closed++;if(gain>0)A.wins++;
+    if(p.sh<1e-6)delete A.pos[SYM];
+    log(`${by} SELL ${fx(sh,4)} ${SYM} @ ${fx(BID)} (${gain>=0?"+":""}${money(gain)})${why?" - "+why:""}`,gain>=0?"pos":"neg");
+  }
+  A.orders++;mark(side,by==="BOT"?"":"you");drawAvg();saveA();render();return true;
+}
+$("buyBtn").onclick=()=>fill("buy",+$("qty").value||0,"","YOU");
+$("sellBtn").onclick=()=>{const p=A.pos[SYM];fill("sell",Math.min(+$("qty").value||0,p?p.sh*BID:0)||+$("qty").value||0,"","YOU")};
+
+// ---------- shared rules (the live bot and the backtest use the same functions) ----------
+const FOMC=new Set(["20260128","20260318","20260429","20260617","20260729","20260916","20261028","20261209"]); // 2026 decision days, 2:00 PM ET
+const etFmt=new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",hour12:false,hour:"2-digit",minute:"2-digit",year:"numeric",month:"2-digit",day:"2-digit"});
+function etOf(ms){const p=etFmt.formatToParts(new Date(ms)),g=k=>p.find(x=>x.type===k).value;return{day:g("year")+g("month")+g("day"),min:(+g("hour")%24)*60+ +g("minute")}}
+const etBar=b=>b._et||(b._et=etOf((b.time-TZ)*1000));
+function fomcBlocks(et){return FOMC.has(et.day)&&et.min>=810&&et.min<900?"Fed decision window (13:30-15:00 ET)":null}
+function atr(B,n,len=14){let s=0,k=0;for(let i=Math.max(1,n-len+1);i<=n;i++){const b=B[i],pc=B[i-1].close;s+=Math.max(b.high-b.low,Math.abs(b.high-pc),Math.abs(b.low-pc));k++}return k?s/k:0}
+function vwapAt(B,n){ // session VWAP (from 9:30 ET) up to bar n; falls back to the average price when volume is missing
+  const d=etBar(B[n]).day;let pv=0,v=0,sp=0,k=0;
+  for(let i=n;i>=0;i--){const b=B[i],e=etBar(b);if(e.day!==d||e.min<570)break;const tp=(b.high+b.low+b.close)/3;pv+=tp*(b.volume||0);v+=b.volume||0;sp+=tp;k++}
+  return v>0?pv/v:k?sp/k:null;
+}
+// liquidity sweep -> break of structure -> fair value gap. B[n] is the candle that just closed.
+function smcStep(st,B,n){
+  const b=B[n],L=20;if(n<L+5)return{st,ev:null};
+  if(st&&n-st.at>20)return{st:null,ev:st.phase==="fvg"?"expired":null};
+  if(!st||st.phase==="sweep"&&b.low<st.low){
+    let prevLow=Infinity;for(let i=n-L;i<n;i++)prevLow=Math.min(prevLow,B[i].low);
+    if(b.low<prevLow&&b.close>prevLow){let hi=-Infinity;for(let i=n-10;i<=n;i++)hi=Math.max(hi,B[i].high);
+      return{st:{phase:"sweep",at:n,low:b.low,high:hi},ev:"sweep",prevLow}}
+  }
+  if(st&&st.phase==="sweep"){
+    const body=Math.abs(b.close-b.open),range=b.high-b.low;
+    if(b.close>st.high&&range>0&&body/range>0.5)st={...st,bos:n};
+    if(st.bos!=null&&n-st.bos<=2){const a=B[n-2];
+      if(a.high<b.low){const entry=(a.high+b.low)/2;
+        // stop under the sweep low, but never closer than one ATR so normal noise does not stop it out
+        const stop=Math.min(st.low-Math.max(0.01,st.low*0.0002),entry-atr(B,n));
+        return{st:{...st,phase:"fvg",at:n,lo:a.high,hi:b.low,entry,stop},ev:"fvg"}}
+    }
+  }
+  return{st,ev:null};
+}
+// ---------- bot ----------
+// New York clock for session-based strategies
+function nyNow(){const p=new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",hour12:false,hour:"2-digit",minute:"2-digit",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date());
+  const g=k=>p.find(x=>x.type===k).value;return{day:g("year")+g("month")+g("day"),min:(+g("hour")%24)*60+ +g("minute")}}
+const STRATS={
+  smc:"Waits for price to sweep below the lowest low of the last 20 one-minute candles and close back above it (a liquidity grab), then a strong candle that breaks the recent high (break of structure) and leaves a fair value gap. Buys when price pulls back into the middle of that gap, stop under the sweep low (at least one ATR away), target 2x the risk. Long only.",
+  orb:"New York session only. Records the high and low of 9:30-9:35 ET, then buys the first break above that range before 11:00 ET, stop at the bottom of the range (or its middle if the range is wide), target 2x the risk, out by 15:55 ET. One trade a day.",
+  mom:"New York session only. From Gao et al. (2018): if the first half hour (9:30-10:00 ET) is up, buy at 15:30 ET and sell at 15:59 ET; if it is down, stay out. One trade a day, 20% of equity, stop at -0.5%.",
+  mr:"Scalps tiny dips: buys when price is 1.8 standard deviations below the last 120 ticks, sells at +0.08%, at -0.08%, back at the average, or after 5 minutes."};
+let botOn=false,ticks=[],cool=0,smc=null,day={},fvgLines=[],senti=null,haltedNoted=false;
+function showStrat(){$("stratNote").textContent="Strategy: "+STRATS[$("strat").value]}
+$("strat").onchange=()=>{if(botOn){$("strat").value=A.strat||"smc";log("stop the bot before changing strategy","neg");return}A.strat=$("strat").value;saveA();smc=null;clearFvg();showStrat()};
+function clearFvg(){fvgLines.forEach(l=>candles.removePriceLine(l));fvgLines=[]}
+function sizeByRisk(entry,stop){ // 1% of equity at risk, capped by the 25% position limit (minus a hair)
+  const eq=equity(),per=entry-stop;if(per<=0)return 0;
+  return Math.floor(Math.min(eq*RISK.riskPerTrade/per*entry,eq*(RISK.maxPos-0.005),A.cash-eq*RISK.cashBuffer));
+}
+function haltedForDay(){ // daily loss limit
+  const today=new Date().toDateString();
+  if(A.dayStart!==today){A.dayStart=today;A.dayStartEq=equity();haltedNoted=false;saveA()}
+  if(equity()<=A.dayStartEq*(1-RISK.dailyLoss)){if(!haltedNoted){log("daily loss limit hit ("+RISK.dailyLoss*100+"%): bot stops buying until tomorrow","neg");haltedNoted=true}return true}
+  return false;
+}
+function filterBlocks(B,n,price){ // VWAP and Fed filters, shared with the backtest
+  if(!B[n])return null;
+  if($("fomcF").checked){const f=fomcBlocks(etBar(B[n]));if(f)return f}
+  if($("vwapF").checked){const v=vwapAt(B,n);if(v&&price<v)return "price "+fx(price)+" is below VWAP "+fx(v)}
+  return null;
+}
+function sentimentBlocks(){
+  if(!$("senti").checked||!senti||senti.tagged<5)return null;
+  return senti.bullShare<0.45?"StockTwits is "+Math.round(senti.bullShare*100)+"% bullish on "+SYM:null;
+}
+function enter(usd,why,stop,target){
+  if(haltedForDay())return false;
+  const sb=sentimentBlocks()||filterBlocks(bars,bars.length-1,ASK);if(sb){log("skip buy "+SYM+": "+sb,"neg");return false}
+  if(!fill("buy",usd,why,"BOT"))return false;
+  const p=A.pos[SYM];p.since=Date.now()/1000;p.stop=stop;p.target=target;p.strat=$("strat").value;saveA();return true;
+}
+function exitChecks(p,now,ny){ // stop / target / time exits for the rule-based strategies
+  if(p.stop&&BID<=p.stop)return "stop";
+  if(p.target&&BID>=p.target)return "target 2R";
+  if((p.strat==="orb"||p.strat==="mom")&&ny.min>=(p.strat==="mom"?959:955))return "end of session";
+  if(p.strat==="smc"&&now-p.since>45*60)return "time stop 45m";
+  return null;
+}
+function botTick(){
+  ticks.push(MID);if(ticks.length>120)ticks.shift();
+  const strat=$("strat").value,ny=nyNow(),now=Date.now()/1000;
+  // opening range and first-half-hour bookkeeping run even while the bot is off
+  if(day.d!==ny.day)day={d:ny.day};
+  if(ny.min>=570&&ny.min<575){day.orH=Math.max(day.orH||0,MID);day.orL=Math.min(day.orL||1e9,MID)}
+  if(ny.min>=570&&day.open930==null)day.open930=MID;
+  if(ny.min>=600&&day.ret30==null&&day.open930!=null)day.ret30=MID/day.open930-1;
+  if(!botOn)return;
+  const p=A.pos[SYM];
+  if(p&&p.sh>1e-9){
+    let why=null;
+    if(p.strat&&p.strat!=="mr")why=exitChecks(p,now,ny);
+    else{const m=ticks.reduce((a,b)=>a+b,0)/ticks.length,sd=Math.sqrt(ticks.reduce((a,b)=>a+(b-m)*(b-m),0)/ticks.length),z=sd>0?(MID-m)/sd:0,ret=(BID-p.avg)/p.avg;
+      why=ret>=0.0008?"take profit":ret<=-0.0008?"stop loss":now-(p.since||now)>=300?"time stop":z>=0.3?"back to average":null}
+    if(why&&fill("sell",p.sh*BID,why+" "+((BID-p.avg)/p.avg*100).toFixed(3)+"%","BOT")){cool=now+30;clearFvg()}
+    return;
+  }
+  if(now<cool)return;
+  if(strat==="mr"){
+    if(ticks.length<40)return;
+    const m=ticks.reduce((a,b)=>a+b,0)/ticks.length,sd=Math.sqrt(ticks.reduce((a,b)=>a+(b-m)*(b-m),0)/ticks.length),z=sd>0?(MID-m)/sd:0;
+    if(z<=-1.8&&!enter(Math.floor(equity()*0.20),"dip z="+z.toFixed(2),0,0))cool=now+5;
+  }else if(strat==="smc"){
+    if(smc&&smc.phase==="fvg"&&ASK<=smc.entry&&ASK>smc.stop){
+      const r=smc.entry-smc.stop,tgt=ASK+2*r,usd=sizeByRisk(ASK,smc.stop);
+      log(`FVG retest: entry ${fx(ASK)}, stop ${fx(smc.stop)}, target ${fx(tgt)}`);
+      if(!enter(usd,"FVG entry, stop "+fx(smc.stop)+" target "+fx(tgt),smc.stop,tgt))cool=now+30;
+      smc=null;
+    }
+  }else if(strat==="orb"){
+    if(day.orH&&!day.orbDone&&ny.min>=575&&ny.min<660&&ASK>day.orH){
+      const range=day.orH-day.orL,stop=range/day.orH>0.004?(day.orH+day.orL)/2:day.orL,tgt=ASK+2*(ASK-stop);
+      day.orbDone=true;enter(sizeByRisk(ASK,stop),"break of opening range "+fx(day.orL)+"-"+fx(day.orH),stop,tgt);
+    }
+  }else if(strat==="mom"){
+    if(day.ret30!=null&&!day.momDone&&ny.min>=930&&ny.min<955){
+      day.momDone=true;
+      if(day.ret30>0)enter(Math.floor(equity()*0.20),"first half hour was +"+(day.ret30*100).toFixed(2)+"%",ASK*0.995,0);
+      else log("intraday momentum: first half hour was "+(day.ret30*100).toFixed(2)+"%, staying out today");
+    }
+  }
+}
+// liquidity sweep -> break of structure -> fair value gap, evaluated when each 1-minute candle closes
+function onBarClose(){
+  drawVwap();
+  if(!botOn||$("strat").value!=="smc"||A.pos[SYM])return;
+  const n=bars.length-1,b=bars[n],r=smcStep(smc,bars,n);smc=r.st;
+  if(r.ev==="expired"){log("FVG setup expired");clearFvg()}
+  if(r.ev==="sweep"){
+    markers.push({time:b.time,position:"belowBar",color:cv("--mute"),shape:"circle",text:"sweep"});candles.setMarkers(markers.slice(-200));
+    log(`liquidity sweep: wick to ${fx(b.low)} below the 20-candle low ${fx(r.prevLow)}, closed back above`);
+  }
+  if(r.ev==="fvg"){
+    markers.push({time:b.time,position:"aboveBar",color:cv("--blue"),shape:"square",text:"BOS + FVG"});candles.setMarkers(markers.slice(-200));
+    clearFvg();
+    fvgLines=[candles.createPriceLine({price:smc.hi,color:cv("--blue"),lineStyle:1,lineWidth:1,title:"FVG"}),candles.createPriceLine({price:smc.lo,color:cv("--blue"),lineStyle:1,lineWidth:1,title:""})];
+    log(`break of structure above ${fx(smc.high)} with a fair value gap ${fx(smc.lo)}-${fx(smc.hi)}: waiting for a pullback to ${fx(smc.entry)} (stop ${fx(smc.stop)})`);
+  }
+}
+// StockTwits sentiment (server route, cached); a filter only, never a reason to buy on its own
+async function loadSentiment(){
+  if(!$("senti").checked)return;
+  try{const r=await fetch("/api/sentiment?symbol="+SYM);const j=await r.json();if(!r.ok)throw new Error(j.error||r.status);senti=j;render()}
+  catch(e){senti=null;$("msg").textContent="StockTwits sentiment unavailable ("+e.message+"); the filter is ignored."}
+}
+setInterval(loadSentiment,60000);
+$("senti").onchange=()=>{senti=null;loadSentiment();render()};
+$("bot").onclick=()=>{botOn=!botOn;$("bot").textContent=botOn?"Stop bot":"Start bot";$("strat").disabled=botOn;
+  log(botOn?"bot started on "+SYM+": "+$("strat").selectedOptions[0].text:"bot stopped");if(botOn)haltedForDay()};
+
+// ---------- backtest: the same rules over past 1-minute bars, with costs ----------
+// Fills: entries and exits at the bar's price plus/minus the cost; if a bar touches both stop and target, the stop counts (conservative).
+function backtest(B,strat,costPct){
+  const c=costPct/100,cash0=10000;let eq=cash0,pos=null,st=null,day={},cool=-1,peak=eq,maxDD=0;const trades=[];
+  const close=(price,i,why)=>{const px=price*(1-c),ret=px/pos.entry-1;eq+=pos.usd*ret;trades.push({ret,why,bars:i-pos.i});pos=null;st=null;cool=i+1};
+  const open=(price,i,stop,target,usdFrac)=>{const px=price*(1+c);
+    const usd=usdFrac?eq*usdFrac:Math.min(eq*RISK.riskPerTrade/Math.max(px-stop,px*1e-4)*px,eq*(RISK.maxPos-0.005));
+    pos={entry:px,stop,target,usd,i,strat}};
+  for(let i=1;i<B.length;i++){
+    const b=B[i],et=etBar(b);
+    if(day.d!==et.day){day={d:et.day,start:eq};st=null}
+    if(et.min>=570&&et.min<575){day.orH=Math.max(day.orH||0,b.high);day.orL=Math.min(day.orL||1e9,b.low)}
+    if(et.min>=570&&day.open930==null)day.open930=b.open;
+    if(et.min===599&&day.open930)day.ret30=b.close/day.open930-1;
+    if(pos){ // exits
+      if(pos.stop&&b.low<=pos.stop){close(Math.min(b.open,pos.stop),i,"stop")}
+      else if(pos.target&&b.high>=pos.target){close(Math.max(b.open,pos.target),i,"target")}
+      else if((strat==="orb"&&et.min>=955)||(strat==="mom"&&et.min>=959)||(strat==="smc"&&i-pos.i>=45)){close(b.close,i,"time")}
+      else if(strat==="mr"){const ret=b.close/pos.entry-1;let m=0,sd=0;for(let k=i-29;k<=i;k++)m+=B[k].close;m/=30;for(let k=i-29;k<=i;k++)sd+=(B[k].close-m)**2;sd=Math.sqrt(sd/30);
+        if(ret>=0.0008||ret<=-0.0008||i-pos.i>=5||(sd>0&&(b.close-m)/sd>=0.3))close(b.close,i,"exit")}
+      else if(etBar(B[i]).day!==etBar(B[i-1]).day){close(b.open,i,"new day")}
+    }
+    if(!pos&&i>=cool){ // entries
+      const halted=eq<=day.start*(1-RISK.dailyLoss);
+      const ok=price=>!halted&&!filterBlocks(B,i-1,price);
+      if(strat==="smc"){
+        if(st&&st.phase==="fvg"&&b.low<=st.entry&&b.open>st.stop){const px=Math.min(b.open,st.entry);if(ok(px))open(px,i,st.stop,px+2*(px-st.stop));st=null}
+        if(!pos){const r=smcStep(st,B,i);st=r.st}
+      }else if(strat==="orb"){
+        if(day.orH&&!day.orbDone&&et.min>=575&&et.min<660&&b.high>day.orH){const px=Math.max(b.open,day.orH),range=day.orH-day.orL,stop=range/day.orH>0.004?(day.orH+day.orL)/2:day.orL;
+          day.orbDone=true;if(ok(px))open(px,i,stop,px+2*(px-stop))}
+      }else if(strat==="mom"){
+        if(day.ret30!=null&&!day.momDone&&et.min>=930&&et.min<955){day.momDone=true;if(day.ret30>0&&ok(b.open))open(b.open,i,b.open*0.995,0,0.20)}
+      }else if(strat==="mr"&&i>=30){
+        let m=0,sd=0;for(let k=i-29;k<=i;k++)m+=B[k].close;m/=30;for(let k=i-29;k<=i;k++)sd+=(B[k].close-m)**2;sd=Math.sqrt(sd/30);
+        if(sd>0&&(b.close-m)/sd<=-1.8&&ok(b.close))open(b.close,i+1<B.length?i:i,0,0,0.20);
+      }
+    }
+    const mark=eq+(pos?pos.usd*(b.close/pos.entry-1):0);peak=Math.max(peak,mark);maxDD=Math.max(maxDD,1-mark/peak);
+  }
+  if(pos)close(B[B.length-1].close,B.length-1,"end");
+  const n=trades.length,rets=trades.map(t=>t.ret),wins=rets.filter(r=>r>0),loss=rets.filter(r=>r<=0);
+  const mean=n?rets.reduce((a,b)=>a+b,0)/n:0,sd=n>1?Math.sqrt(rets.reduce((a,b)=>a+(b-mean)**2,0)/(n-1)):0;
+  return{n,winRate:n?wins.length/n:0,avg:mean,pf:loss.length?wins.reduce((a,b)=>a+b,0)/-loss.reduce((a,b)=>a+b,0):(wins.length?Infinity:0),
+    net:eq/cash0-1,maxDD,t:sd>0?mean/sd*Math.sqrt(n):0,days:new Set(B.map(b=>etBar(b).day)).size};
+}
+function verdict(r,bh){
+  if(r.n<30)return["too few trades to judge ("+r.n+" < 30)","mute"];
+  if(r.net<=0)return["loses money after costs","neg"];
+  if(r.t<2)return["profit could easily be luck (t = "+r.t.toFixed(1)+" < 2)","mute"];
+  if(r.net<bh)return["profitable, but buy-and-hold did better","mute"];
+  return["passes: profitable, t = "+r.t.toFixed(1)+", beat buy-and-hold. Still check it on other periods","pos"];
+}
+$("btRun").onclick=async()=>{
+  const cost=Math.max(0,+$("btCost").value||0);let B;
+  $("btTable").innerHTML="";$("btMsg").textContent="Loading history...";
+  try{
+    if($("src").value==="real"){const h=await api("bars?symbol="+SYM+"&days="+$("btDays").value);B=h.bars.map(b=>({...b,time:b.time+TZ}))}
+    else{B=bars.slice(0,-1)}
+  }catch(e){$("btMsg").textContent="Could not load history: "+e.message;return}
+  if(!B||B.length<100){$("btMsg").textContent="Not enough bars to test ("+(B?B.length:0)+").";return}
+  const bh=B[B.length-1].close/B[0].open-1;
+  const names={smc:"Liquidity sweep + FVG",orb:"Opening range breakout",mom:"Intraday momentum",mr:"Tick mean reversion"};
+  const pc=x=>(x>=0?"+":"")+(x*100).toFixed(2)+"%";
+  const rows=Object.keys(names).map(k=>{const r=backtest(B,k,cost),[v,cl]=verdict(r,bh);
+    return`<tr><td>${names[k]}</td><td>${r.n}</td><td>${r.n?Math.round(r.winRate*100)+"%":"-"}</td><td>${r.n?pc(r.avg):"-"}</td><td>${r.n?(r.pf===Infinity?"inf":r.pf.toFixed(2)):"-"}</td><td class="${r.net>=0?"pos":"neg"}">${pc(r.net)}</td><td>${pc(-r.maxDD)}</td><td class="${cl}" style="text-align:left;white-space:normal">${v}</td></tr>`});
+  $("btTable").innerHTML="<tr><th>Strategy</th><th>Trades</th><th>Win rate</th><th>Avg trade</th><th>Profit factor</th><th>Net return</th><th>Max drawdown</th><th>Verdict</th></tr>"+rows.join("")+
+    `<tr><td>Buy and hold ${SYM}</td><td>1</td><td></td><td></td><td></td><td class="${bh>=0?"pos":"neg"}">${pc(bh)}</td><td></td><td class="mute" style="text-align:left">the benchmark</td></tr>`;
+  const real=$("src").value==="real";
+  $("btMsg").textContent=`${SYM}: ${B.length.toLocaleString()} one-minute bars over ${new Set(B.map(b=>etBar(b).day)).size} days, ${cost}% cost per side, filters: ${[$("vwapF").checked&&"VWAP",$("fomcF").checked&&"Fed",].filter(Boolean).join(" + ")||"none"}. `+
+    (real?"Testing 4 strategies on one period means the best one looks better than it really is; trust only a result that holds on other periods and symbols.":"Simulated random prices: no strategy can have a real edge here, so this only shows the cost of trading.");
+};
+
+// ---------- data feeds ----------
+let SYM="SPY",feed=null;
+function onQuote(bid,ask,vol){
+  BID=bid;ASK=ask;MID=(bid+ask)/2;A.last[SYM]=BID;
+  addTickToCandle(Date.now()/1000,MID,vol);botTick();render();
+}
+// simulated: a random walk ticking twice a second, with a realistic spread
+function simFeed(){
+  const base=A.last[SYM]||SYMS[SYM].px,step=0.00012;
+  let mid=base;const list=[],now=Math.floor(Date.now()/1000/60)*60;
+  let p=base;for(let i=240;i>0;i--){ // 4 hours of 1-minute history
+    const o=p,c=o*(1+(Math.random()-.5)*2*step*Math.sqrt(120)*0.6);
+    const h=Math.max(o,c)*(1+Math.random()*step*4),l=Math.min(o,c)*(1-Math.random()*step*4);
+    list.push({time:now-i*60+TZ,open:o,high:h,low:l,close:c,volume:Math.round(20000+Math.random()*200000)});p=c;
+  }
+  const k=base/p;list.forEach(b=>{b.open*=k;b.high*=k;b.low*=k;b.close*=k}); // end exactly at the current price
+  setBars(list);mid=list[list.length-1].close;
+  const id=setInterval(()=>{
+    mid*=1+((Math.random()+Math.random()+Math.random()-1.5)*2*step);
+    const half=Math.max(0.005,mid*0.00005);
+    onQuote(mid-half,mid+half,Math.round(50+Math.random()*1500));
+  },500);
+  return()=>clearInterval(id);
+}
+async function api(path){
+  const r=await fetch("/api/"+path,{headers:{"x-trader-passcode":$("pass").value}});
+  const j=await r.json().catch(()=>({error:"bad response"}));if(!r.ok)throw new Error(j.error||("HTTP "+r.status));return j;
+}
+function realFeed(){
+  let stop=false,timer=null,refresh=null;
+  (async()=>{
+    try{
+      const h=await api("bars?symbol="+SYM+"&limit=400");
+      if(stop)return;
+      setBars(h.bars.map(b=>({...b,time:b.time+TZ})));
+      $("msg").textContent="Real data: "+h.bars.length+" one-minute bars from Alpaca (IEX). Quotes update every second.";
+      const poll=async()=>{try{const q=await api("quotes?symbols="+SYM),x=q.quotes[SYM];if(x&&!stop)onQuote(x.bid,x.ask,0)}catch(e){$("msg").textContent="Quote error: "+e.message}};
+      poll();timer=setInterval(poll,1000);
+      refresh=setInterval(async()=>{try{const r=await api("bars?symbol="+SYM+"&limit=2");for(const b of r.bars){const t=b.time+TZ;if(cur&&t===cur.time){cur.volume=b.volume;vols.update({time:t,value:b.volume,color:colorOf(cur)})}}}catch(e){}},30000);
+    }catch(e){$("msg").textContent="Could not load real data: "+e.message+". Showing simulated ticks instead.";$("src").value="sim";start()}
+  })();
+  return()=>{stop=true;clearInterval(timer);clearInterval(refresh)};
+}
+function start(){
+  if(feed)feed();ticks=[];BID=ASK=MID=0;
+  $("title").textContent=SYM+" · "+SYMS[SYM].n+" · 1m";
+  $("passWrap").hidden=$("src").value!=="real";
+  if($("src").value==="real"){if(!$("pass").value){$("msg").textContent="Enter your trader passcode to stream real data.";feed=null;return}feed=realFeed()}
+  else{$("msg").textContent="Simulated ticks (twice a second). Choose Real (Alpaca) for live market data.";feed=simFeed()}
+  drawAvg();
+}
+
+// ---------- display ----------
+function render(){
+  if(cur){const first=bars[0],chg=cur.close-first.open,c=chg>=0?"pos":"neg";
+    $("ohlc").innerHTML=`O<b class="${c}">${fx(cur.open)}</b> H<b class="${c}">${fx(cur.high)}</b> L<b class="${c}">${fx(cur.low)}</b> C<b class="${c}">${fx(cur.close)}</b> <b class="${c}">${chg>=0?"+":""}${fx(chg)} (${chg>=0?"+":""}${fx(chg/first.open*100)}%)</b>`}
+  if(BID){$("bid").textContent=fx(BID);$("ask").textContent=fx(ASK);$("spread").textContent=fx(ASK-BID)}
+  const eq=equity(),pl=eq-A.start,p=A.pos[SYM],open=p?p.sh*(BID-p.avg):0;
+  $("stats").innerHTML=[["Equity",money(eq)],["Total P/L",`<span class="${pl>=0?"pos":"neg"}">${money(pl)}</span>`],["Cash",money(A.cash)],
+    [SYM+" position",p?fx(p.sh,4)+" sh":"none"],["Open P/L",`<span class="${open>=0?"pos":"neg"}">${money(open)}</span>`],["Realized",money(A.realized)],
+    ["Orders today",A.orders],["Today vs start",A.dayStartEq?`<span class="${eq>=A.dayStartEq?"pos":"neg"}">${fx((eq/A.dayStartEq-1)*100)}%</span>`:"n/a"],
+    ["StockTwits",!$("senti").checked?"off":senti?Math.round(senti.bullShare*100)+"% bull ("+senti.tagged+")":"loading"],["Win rate",A.closed?Math.round(A.wins/A.closed*100)+"% of "+A.closed:"n/a"]]
+    .map(([k,v])=>`<div class="stat"><span>${k}</span><b>${v}</b></div>`).join("");
+}
+Object.keys(SYMS).forEach(s=>$("sym").insertAdjacentHTML("beforeend",`<option value="${s}">${s} - ${SYMS[s].n}</option>`));
+$("sym").onchange=()=>{SYM=$("sym").value;smc=null;clearFvg();senti=null;start();loadSentiment()};
+$("src").onchange=start;
+$("pass").onchange=start;
+$("reset").onclick=()=>{if(!confirm("Reset the fake-money account to $10,000?"))return;A=fresh();saveA();renderLog();drawAvg();markers=[];candles.setMarkers([]);render()};
+$("strat").value=A.strat||"smc";showStrat();renderLog();start();render();
+</script>
+</body>
+</html>
