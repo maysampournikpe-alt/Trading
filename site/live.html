@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Paper Trader</title>
+<style>
+:root{--bg:#fafaf8;--fg:#1a1a18;--mute:#62625c;--card:#fff;--line:#e4e4de;--accent:#0b6b4f;--bad:#b3261e}
+@media (prefers-color-scheme:dark){:root{--bg:#121413;--fg:#ecece8;--mute:#9a9a92;--card:#1b1d1c;--line:#2c2f2d;--accent:#4fd1a1;--bad:#ff8a80}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+.wrap{max-width:960px;margin:0 auto;padding:0 16px 48px}
+h1{font-size:1.8rem;margin:32px 0 6px}h2{font-size:1.1rem;margin:0 0 10px}
+.mute{color:var(--mute)}a{color:var(--accent)}
+.warn{border:1px solid var(--line);border-left:4px solid var(--accent);background:var(--card);padding:10px 14px;border-radius:8px;margin:14px 0;font-size:.9rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px;overflow-x:auto}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:end}
+label{display:flex;flex-direction:column;font-size:.8rem;color:var(--mute);gap:3px}
+input{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:inherit;width:150px}
+button{background:var(--accent);color:var(--bg);border:0;border-radius:8px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer}
+button.sec{background:transparent;color:var(--fg);border:1px solid var(--line)}
+button:disabled{opacity:.5;cursor:default}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+th,td{text-align:right;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.stat b{display:block;font-size:1.3rem}.stat span{font-size:.78rem;color:var(--mute)}
+.pos{color:var(--accent)}.neg{color:var(--bad)}
+#log{max-height:280px;overflow:auto;font:.82rem/1.5 ui-monospace,Menlo,monospace}
+#log div{padding:2px 0;border-bottom:1px dashed var(--line)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<p style="margin-top:20px"><a href="/">&larr; Trader Skills</a> &middot; <a href="/trade.html">Simulated desk</a></p>
+<h1>Live Paper Trader</h1>
+<p class="mute">A fast short-term trader on your Alpaca <b>paper</b> account, using real-time quotes (IEX feed).</p>
+<div class="warn"><b>Paper money only.</b> The server is hard-wired to Alpaca's paper endpoint and cannot reach a live account. Fast trading is not a reliable way to make money: most short-term traders lose, spreads and the IEX-only feed work against you, and a profitable day here proves nothing. Runs only while this tab is open. Not financial advice.</div>
+
+<div class="card">
+  <div class="row">
+    <label>Passcode<input id="pass" type="password" autocomplete="off"></label>
+    <label>$ per trade (max 500)<input id="size" type="number" value="200" min="10" max="500" step="10"></label>
+    <button id="go">Connect</button>
+    <button id="toggle" class="sec" disabled>Start trading</button>
+    <button id="flat" class="sec" disabled>Sell everything</button>
+  </div>
+  <p id="msg" class="mute" style="margin:10px 0 0;font-size:.85rem">Enter the passcode you set as TRADER_PASSCODE on the server.</p>
+</div>
+<div class="card"><div class="stats" id="stats"></div></div>
+<div class="card"><h2>Quotes and signals</h2><table id="q"></table></div>
+<div class="card"><h2>Positions</h2><table id="pos"></table></div>
+<div class="card"><h2>Activity</h2><div id="log"></div></div>
+</div>
+<script>
+"use strict";
+const $=id=>document.getElementById(id),SY=["AAPL","AXP","GOOGL","KO","BAC"];
+const P={win:60,minSamples:20,entryZ:-1.5,exitZ:0.5,takeProfit:0.0025,stop:-0.004,maxHoldMs:10*60e3,
+  cooldownMs:60e3,maxSpread:0.003,maxPositions:3,maxTradesPerDay:40,pollMs:4000};
+const money=x=>(x<0?"-":"")+"$"+Math.abs(x).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+let pass="",acct=null,run=false,busy=false,hist={},last={},entered={},cool={},trades=0,wins=0,closed=0,startEq=null,timer=null;
+SY.forEach(s=>hist[s]=[]);
+function log(m,c){const d=document.createElement("div");d.className=c||"";d.textContent=new Date().toLocaleTimeString()+"  "+m;$("log").prepend(d);while($("log").children.length>200)$("log").lastChild.remove()}
+async function api(path,opt){
+  const r=await fetch("/api/"+path,{...opt,headers:{"x-trader-passcode":pass,"content-type":"application/json"}});
+  const j=await r.json().catch(()=>({error:"bad response"}));
+  if(!r.ok)throw new Error(j.error||("HTTP "+r.status));return j;
+}
+function stats(a){
+  const pl=startEq==null?0:a.equity-startEq;
+  $("stats").innerHTML=[["Equity",money(a.equity)],["Session P/L",`<span class="${pl>=0?"pos":"neg"}">${money(pl)}</span>`],["Cash",money(a.cash)],
+   ["Market",a.market_open?"open":"closed"],["Trades",trades],["Win rate",closed?Math.round(wins/closed*100)+"% ("+closed+")":"n/a"]]
+   .map(([k,v])=>`<div class="stat"><span>${k}</span><b>${v}</b></div>`).join("");
+  $("pos").innerHTML="<tr><th>Ticker</th><th>Qty</th><th>Avg</th><th>Price</th><th>Value</th><th>P/L</th></tr>"+
+    (a.positions.map(p=>`<tr><td>${p.symbol}</td><td>${p.qty}</td><td>${money(p.avg)}</td><td>${money(p.price)}</td><td>${money(p.value)}</td><td class="${p.pl>=0?"pos":"neg"}">${money(p.pl)}</td></tr>`).join("")||'<tr><td colspan="6" class="mute">No open positions</td></tr>');
+}
+function zscore(s){
+  const h=hist[s];if(h.length<P.minSamples)return null;
+  const m=h.reduce((x,y)=>x+y,0)/h.length,sd=Math.sqrt(h.reduce((x,y)=>x+(y-m)*(y-m),0)/h.length);
+  return sd>0?(h[h.length-1]-m)/sd:0;
+}
+async function order(body,why){
+  try{const r=await api("order",{method:"POST",body:JSON.stringify(body)});trades++;
+    log(`${body.side.toUpperCase()} ${body.symbol} ${body.notional?"$"+body.notional:body.qty+" sh"} (${why}) -> ${r.status}`,"pos");return true}
+  catch(e){log(`order refused ${body.side} ${body.symbol}: ${e.message}`,"neg");return false}
+}
+async function tick(){
+  if(busy)return;busy=true;
+  try{
+    const [q,a]=await Promise.all([api("quotes"),api("account")]);
+    acct=a;if(startEq==null)startEq=a.equity;
+    const now=Date.now(),rows=[];
+    for(const s of SY){
+      const x=q.quotes[s];if(!x)continue;last[s]=x;
+      hist[s].push(x.mid);if(hist[s].length>P.win)hist[s].shift();
+    }
+    const held=Object.fromEntries(a.positions.map(p=>[p.symbol,p]));
+    // a buy takes a moment to show up as a position: count it as pending so it is not bought twice
+    for(const s of Object.keys(entered)){if(!held[s]&&now-entered[s]>30000)delete entered[s]}
+    const pending=s=>!held[s]&&entered[s]&&now-entered[s]<=30000;
+    for(const s of SY){
+      const x=last[s];if(!x)continue;const z=zscore(s),sp=(x.ask-x.bid)/x.mid,p=held[s];
+      rows.push(`<tr><td>${s}</td><td>${money(x.bid)}</td><td>${money(x.ask)}</td><td>${(sp*100).toFixed(2)}%</td><td>${z==null?"warming up ("+hist[s].length+"/"+P.minSamples+")":z.toFixed(2)}</td></tr>`);
+      if(!run||!a.market_open||z==null)continue;
+      if(p){ // exit rules
+        const ret=(x.bid-p.avg)/p.avg,age=now-(entered[s]||now);
+        const why=ret>=P.takeProfit?"take profit":ret<=P.stop?"stop loss":age>=P.maxHoldMs?"time stop":z>=P.exitZ?"reverted to mean":null;
+        if(why&&await order({symbol:s,side:"sell",qty:p.qty},`${why}, ${(ret*100).toFixed(2)}%`)){
+          closed++;if(ret>0)wins++;cool[s]=now+P.cooldownMs;delete entered[s];delete held[s]}
+      }else if(z<=P.entryZ&&sp<=P.maxSpread&&(cool[s]||0)<now&&!pending(s)&&SY.filter(k=>held[k]||pending(k)).length<P.maxPositions&&trades<P.maxTradesPerDay){
+        const usd=Math.min(+$("size").value||200,500);
+        if(await order({symbol:s,side:"buy",notional:usd},`dip z=${z.toFixed(2)}`)){entered[s]=now}
+      }
+    }
+    $("q").innerHTML="<tr><th>Ticker</th><th>Bid</th><th>Ask</th><th>Spread</th><th>z-score</th></tr>"+rows.join("");
+    stats(a);
+    if(run&&!a.market_open)$("msg").textContent="Market is closed. Waiting for the open ("+(a.next_open||"")+").";
+  }catch(e){log("error: "+e.message,"neg");if(/passcode/.test(e.message)){stop();$("go").disabled=false}}
+  busy=false;
+}
+function stop(){run=false;$("toggle").textContent="Start trading";}
+$("go").onclick=async()=>{
+  pass=$("pass").value;$("msg").textContent="Connecting...";
+  try{const a=await api("account");acct=a;startEq=a.equity;stats(a);
+    $("msg").textContent="Connected to your Alpaca paper account ("+(a.market_open?"market open":"market closed")+"). Quotes are polled every "+P.pollMs/1000+"s.";
+    $("toggle").disabled=$("flat").disabled=false;clearInterval(timer);timer=setInterval(tick,P.pollMs);tick();
+  }catch(e){$("msg").textContent="Could not connect: "+e.message}
+};
+$("toggle").onclick=()=>{run=!run;$("toggle").textContent=run?"Pause trading":"Start trading";log(run?"trading started":"trading paused");};
+$("flat").onclick=async()=>{
+  stop();if(!acct)return;log("selling everything");
+  for(const p of acct.positions)await order({symbol:p.symbol,side:"sell",qty:p.qty},"manual flatten");
+};
+</script>
+</body>
+</html>
