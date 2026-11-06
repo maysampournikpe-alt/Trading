@@ -41,7 +41,7 @@ button.sec{background:transparent;color:var(--fg);border:1px solid var(--line)}
 <div class="wrap">
 <p style="margin-top:18px"><a href="/">&larr; Trader Skills</a> &middot; <a href="/trade.html">Paper desk</a> &middot; <a href="/live.html">Live trader</a></p>
 <h1>Tick Chart Trader</h1>
-<div class="warn"><b>Fake money.</b> Prices update tick by tick. By default the ticks are <b>simulated</b>; enter your trader passcode to stream <b>real</b> quotes and 1-minute bars from Alpaca (IEX feed, needs the Alpaca keys on the server). Buys fill at the ask and sells at the bid, so the spread costs you, just like a real market. The bot follows the skills' rules: trader-risk limits (10% cash buffer, 25% max position, $10 minimum, daily order cap) and trader-budget sizing (20% of equity per trade). Not financial advice.</div>
+<div class="warn"><b>Fake money.</b> Prices update tick by tick. By default the ticks are <b>simulated</b>; enter your trader passcode to stream <b>real</b> quotes and 1-minute bars from Alpaca (IEX feed, needs the Alpaca keys on the server). Buys fill at the ask and sells at the bid, so the spread costs you, just like a real market. The bot follows the skills' rules (trader-risk: 10% cash buffer, 25% max position, $10 minimum, daily order cap) plus the risk rules day-trading research and educators agree on: risk at most 1% of equity per trade, sized from the stop distance, and stop for the day after a 2% loss. None of these strategies has reliable evidence of beating the market after costs. Not financial advice.</div>
 
 <div class="card">
   <div class="row">
@@ -49,10 +49,18 @@ button.sec{background:transparent;color:var(--fg);border:1px solid var(--line)}
     <label>Data<select id="src"><option value="sim">Simulated ticks</option><option value="real">Real (Alpaca)</option></select></label>
     <label id="passWrap" hidden>Passcode<input id="pass" type="password" autocomplete="off"></label>
     <label>Order $<input id="qty" type="number" value="1000" min="10" step="100"></label>
+    <label>Bot strategy<select id="strat">
+      <option value="smc">Liquidity sweep + FVG (TJR-style)</option>
+      <option value="orb">Opening range breakout (5 min)</option>
+      <option value="mom">Intraday momentum (last half hour)</option>
+      <option value="mr">Tick mean reversion (scalp)</option>
+    </select></label>
+    <label style="flex-direction:row;align-items:center;gap:6px;color:var(--fg);font-size:.85rem"><input id="senti" type="checkbox" style="width:auto"> StockTwits sentiment filter</label>
     <button id="bot">Start bot</button>
     <button id="reset" class="sec">Reset account</button>
   </div>
-  <p id="msg" class="mute" style="margin:8px 0 0;font-size:.85rem"></p>
+  <p id="stratNote" class="mute" style="margin:8px 0 0;font-size:.85rem"></p>
+  <p id="msg" class="mute" style="margin:4px 0 0;font-size:.85rem"></p>
 </div>
 
 <div class="card">
@@ -77,7 +85,7 @@ const $=id=>document.getElementById(id);
 const SYMS={SPY:{n:"SPDR S&P 500 ETF Trust",px:735.30},AAPL:{n:"Apple",px:341.27},AXP:{n:"American Express",px:309.84},GOOGL:{n:"Alphabet",px:353.78},KO:{n:"Coca-Cola",px:90.11},BAC:{n:"Bank of America",px:53.96}};
 // bot rules: tick mean reversion, sized and limited by the trader-budget / trader-risk defaults
 const BOT={win:120,minTicks:40,entryZ:-1.8,exitZ:0.3,tp:0.0008,sl:-0.0008,maxHoldS:300,coolS:30,size:0.20};
-const RISK={cashBuffer:0.10,maxPos:0.25,minOrder:10,maxOrdersPerDay:300};
+const RISK={cashBuffer:0.10,maxPos:0.25,minOrder:10,maxOrdersPerDay:300,riskPerTrade:0.01,dailyLoss:0.02};
 const TZ=-new Date().getTimezoneOffset()*60; // show candles in local time
 const money=x=>(x<0?"-":"")+"$"+Math.abs(x).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const fx=(x,d=2)=>Number(x).toFixed(d);
@@ -112,6 +120,7 @@ function setBars(list){
 function addTickToCandle(sec,price,vol){
   const t=Math.floor((sec+TZ)/60)*60;
   if(cur&&t<cur.time)return; // late tick
+  if(cur&&t>cur.time)onBarClose(); // the previous candle just closed
   if(!cur||t>cur.time){cur={time:t,open:cur?cur.close:price,high:price,low:price,close:price,volume:0};bars.push(cur);if(bars.length>2000)bars.shift()}
   cur.high=Math.max(cur.high,price);cur.low=Math.min(cur.low,price);cur.close=price;cur.volume+=vol||0;
   candles.update({time:cur.time,open:cur.open,high:cur.high,low:cur.low,close:cur.close});
@@ -162,23 +171,129 @@ function fill(side,usd,why,by){
 $("buyBtn").onclick=()=>fill("buy",+$("qty").value||0,"","YOU");
 $("sellBtn").onclick=()=>{const p=A.pos[SYM];fill("sell",Math.min(+$("qty").value||0,p?p.sh*BID:0)||+$("qty").value||0,"","YOU")};
 
-// ---------- bot: decides on every tick ----------
-let botOn=false,ticks=[],cool=0;
+// ---------- bot ----------
+// New York clock for session-based strategies
+function nyNow(){const p=new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",hour12:false,hour:"2-digit",minute:"2-digit",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date());
+  const g=k=>p.find(x=>x.type===k).value;return{day:g("year")+g("month")+g("day"),min:(+g("hour")%24)*60+ +g("minute")}}
+const STRATS={
+  smc:"Waits for price to sweep below the lowest low of the last 20 one-minute candles and close back above it (a liquidity grab), then a strong candle that breaks the recent high (break of structure) and leaves a fair value gap. Buys when price pulls back into the middle of that gap, stop just under the sweep low, target 2x the risk. Long only.",
+  orb:"New York session only. Records the high and low of 9:30-9:35 ET, then buys the first break above that range before 11:00 ET, stop at the bottom of the range (or its middle if the range is wide), target 2x the risk, out by 15:55 ET. One trade a day.",
+  mom:"New York session only. From Gao et al. (2018): if the first half hour (9:30-10:00 ET) is up, buy at 15:30 ET and sell at 15:59 ET; if it is down, stay out. One trade a day, 20% of equity, stop at -0.5%.",
+  mr:"Scalps tiny dips: buys when price is 1.8 standard deviations below the last 120 ticks, sells at +0.08%, at -0.08%, back at the average, or after 5 minutes."};
+let botOn=false,ticks=[],cool=0,smc=null,day={},fvgLines=[],senti=null,haltedNoted=false;
+function showStrat(){$("stratNote").textContent="Strategy: "+STRATS[$("strat").value]}
+$("strat").onchange=()=>{if(botOn){$("strat").value=A.strat||"smc";log("stop the bot before changing strategy","neg");return}A.strat=$("strat").value;saveA();smc=null;clearFvg();showStrat()};
+function clearFvg(){fvgLines.forEach(l=>candles.removePriceLine(l));fvgLines=[]}
+function sizeByRisk(entry,stop){ // 1% of equity at risk, capped by the 25% position limit (minus a hair)
+  const eq=equity(),per=entry-stop;if(per<=0)return 0;
+  return Math.floor(Math.min(eq*RISK.riskPerTrade/per*entry,eq*(RISK.maxPos-0.005),A.cash-eq*RISK.cashBuffer));
+}
+function haltedForDay(){ // daily loss limit
+  const today=new Date().toDateString();
+  if(A.dayStart!==today){A.dayStart=today;A.dayStartEq=equity();haltedNoted=false;saveA()}
+  if(equity()<=A.dayStartEq*(1-RISK.dailyLoss)){if(!haltedNoted){log("daily loss limit hit ("+RISK.dailyLoss*100+"%): bot stops buying until tomorrow","neg");haltedNoted=true}return true}
+  return false;
+}
+function sentimentBlocks(){
+  if(!$("senti").checked||!senti||senti.tagged<5)return null;
+  return senti.bullShare<0.45?"StockTwits is "+Math.round(senti.bullShare*100)+"% bullish on "+SYM:null;
+}
+function enter(usd,why,stop,target){
+  if(haltedForDay())return false;
+  const sb=sentimentBlocks();if(sb){log("skip buy "+SYM+": "+sb,"neg");return false}
+  if(!fill("buy",usd,why,"BOT"))return false;
+  const p=A.pos[SYM];p.since=Date.now()/1000;p.stop=stop;p.target=target;p.strat=$("strat").value;saveA();return true;
+}
+function exitChecks(p,now,ny){ // stop / target / time exits for the rule-based strategies
+  if(p.stop&&BID<=p.stop)return "stop";
+  if(p.target&&BID>=p.target)return "target 2R";
+  if((p.strat==="orb"||p.strat==="mom")&&ny.min>=(p.strat==="mom"?959:955))return "end of session";
+  if(p.strat==="smc"&&now-p.since>45*60)return "time stop 45m";
+  return null;
+}
 function botTick(){
-  ticks.push(MID);if(ticks.length>BOT.win)ticks.shift();
-  if(!botOn||ticks.length<BOT.minTicks)return;
-  const m=ticks.reduce((a,b)=>a+b,0)/ticks.length,sd=Math.sqrt(ticks.reduce((a,b)=>a+(b-m)*(b-m),0)/ticks.length),z=sd>0?(MID-m)/sd:0;
-  const p=A.pos[SYM],now=Date.now()/1000;
+  ticks.push(MID);if(ticks.length>120)ticks.shift();
+  const strat=$("strat").value,ny=nyNow(),now=Date.now()/1000;
+  // opening range and first-half-hour bookkeeping run even while the bot is off
+  if(day.d!==ny.day)day={d:ny.day};
+  if(ny.min>=570&&ny.min<575){day.orH=Math.max(day.orH||0,MID);day.orL=Math.min(day.orL||1e9,MID)}
+  if(ny.min>=570&&day.open930==null)day.open930=MID;
+  if(ny.min>=600&&day.ret30==null&&day.open930!=null)day.ret30=MID/day.open930-1;
+  if(!botOn)return;
+  const p=A.pos[SYM];
   if(p&&p.sh>1e-9){
-    const ret=(BID-p.avg)/p.avg,age=now-(p.since||now);
-    const why=ret>=BOT.tp?"take profit":ret<=BOT.sl?"stop loss":age>=BOT.maxHoldS?"time stop":z>=BOT.exitZ?"back to average":null;
-    if(why&&fill("sell",p.sh*BID,why+" "+(ret*100).toFixed(3)+"%","BOT"))cool=now+BOT.coolS;
-  }else if(z<=BOT.entryZ&&now>=cool){
-    const usd=Math.floor(equity()*BOT.size);
-    if(fill("buy",usd,"dip z="+z.toFixed(2),"BOT")&&A.pos[SYM])A.pos[SYM].since=now;else cool=now+5;
+    let why=null;
+    if(p.strat&&p.strat!=="mr")why=exitChecks(p,now,ny);
+    else{const m=ticks.reduce((a,b)=>a+b,0)/ticks.length,sd=Math.sqrt(ticks.reduce((a,b)=>a+(b-m)*(b-m),0)/ticks.length),z=sd>0?(MID-m)/sd:0,ret=(BID-p.avg)/p.avg;
+      why=ret>=0.0008?"take profit":ret<=-0.0008?"stop loss":now-(p.since||now)>=300?"time stop":z>=0.3?"back to average":null}
+    if(why&&fill("sell",p.sh*BID,why+" "+((BID-p.avg)/p.avg*100).toFixed(3)+"%","BOT")){cool=now+30;clearFvg()}
+    return;
+  }
+  if(now<cool)return;
+  if(strat==="mr"){
+    if(ticks.length<40)return;
+    const m=ticks.reduce((a,b)=>a+b,0)/ticks.length,sd=Math.sqrt(ticks.reduce((a,b)=>a+(b-m)*(b-m),0)/ticks.length),z=sd>0?(MID-m)/sd:0;
+    if(z<=-1.8&&!enter(Math.floor(equity()*0.20),"dip z="+z.toFixed(2),0,0))cool=now+5;
+  }else if(strat==="smc"){
+    if(smc&&smc.phase==="fvg"&&ASK<=smc.entry&&ASK>smc.stop){
+      const r=smc.entry-smc.stop,tgt=ASK+2*r,usd=sizeByRisk(ASK,smc.stop);
+      log(`FVG retest: entry ${fx(ASK)}, stop ${fx(smc.stop)}, target ${fx(tgt)}`);
+      if(!enter(usd,"FVG entry, stop "+fx(smc.stop)+" target "+fx(tgt),smc.stop,tgt))cool=now+30;
+      smc=null;
+    }
+  }else if(strat==="orb"){
+    if(day.orH&&!day.orbDone&&ny.min>=575&&ny.min<660&&ASK>day.orH){
+      const range=day.orH-day.orL,stop=range/day.orH>0.004?(day.orH+day.orL)/2:day.orL,tgt=ASK+2*(ASK-stop);
+      day.orbDone=true;enter(sizeByRisk(ASK,stop),"break of opening range "+fx(day.orL)+"-"+fx(day.orH),stop,tgt);
+    }
+  }else if(strat==="mom"){
+    if(day.ret30!=null&&!day.momDone&&ny.min>=930&&ny.min<955){
+      day.momDone=true;
+      if(day.ret30>0)enter(Math.floor(equity()*0.20),"first half hour was +"+(day.ret30*100).toFixed(2)+"%",ASK*0.995,0);
+      else log("intraday momentum: first half hour was "+(day.ret30*100).toFixed(2)+"%, staying out today");
+    }
   }
 }
-$("bot").onclick=()=>{botOn=!botOn;$("bot").textContent=botOn?"Stop bot":"Start bot";log(botOn?"bot started on "+SYM:"bot stopped")};
+// liquidity sweep -> break of structure -> fair value gap, evaluated when each 1-minute candle closes
+function onBarClose(){
+  if(!botOn||$("strat").value!=="smc"||A.pos[SYM])return;
+  const n=bars.length-1;if(n<25)return; // bars[n] is the candle that just closed
+  const b=bars[n],L=20;
+  if(smc&&n-smc.at>20){if(smc.phase==="fvg"){log("FVG setup expired");clearFvg()}smc=null}
+  if(!smc||smc.phase==="sweep"&&b.low<smc.low){
+    const prevLow=Math.min(...bars.slice(n-L,n).map(x=>x.low));
+    if(b.low<prevLow&&b.close>prevLow){
+      smc={phase:"sweep",at:n,low:b.low,high:Math.max(...bars.slice(n-10,n+1).map(x=>x.high))};
+      markers.push({time:b.time,position:"belowBar",color:cv("--mute"),shape:"circle",text:"sweep"});candles.setMarkers(markers.slice(-200));
+      log(`liquidity sweep: wick to ${fx(b.low)} below the 20-candle low ${fx(prevLow)}, closed back above`);
+      return;
+    }
+  }
+  if(smc&&smc.phase==="sweep"){
+    const body=Math.abs(b.close-b.open),range=b.high-b.low;
+    if(b.close>smc.high&&range>0&&body/range>0.5)smc.bos=n;
+    if(smc.bos!=null&&n-smc.bos<=2){
+      const a=bars[n-2];
+      if(a.high<b.low){
+        smc.phase="fvg";smc.at=n;smc.lo=a.high;smc.hi=b.low;smc.entry=(a.high+b.low)/2;smc.stop=smc.low-Math.max(0.01,smc.low*0.0002);
+        markers.push({time:b.time,position:"aboveBar",color:cv("--blue"),shape:"square",text:"BOS + FVG"});candles.setMarkers(markers.slice(-200));
+        clearFvg();
+        fvgLines=[candles.createPriceLine({price:smc.hi,color:cv("--blue"),lineStyle:1,lineWidth:1,title:"FVG"}),candles.createPriceLine({price:smc.lo,color:cv("--blue"),lineStyle:1,lineWidth:1,title:""})];
+        log(`break of structure above ${fx(smc.high)} with a fair value gap ${fx(smc.lo)}-${fx(smc.hi)}: waiting for a pullback to ${fx(smc.entry)}`);
+      }
+    }
+  }
+}
+// StockTwits sentiment (server route, cached); a filter only, never a reason to buy on its own
+async function loadSentiment(){
+  if(!$("senti").checked)return;
+  try{const r=await fetch("/api/sentiment?symbol="+SYM);const j=await r.json();if(!r.ok)throw new Error(j.error||r.status);senti=j;render()}
+  catch(e){senti=null;$("msg").textContent="StockTwits sentiment unavailable ("+e.message+"); the filter is ignored."}
+}
+setInterval(loadSentiment,60000);
+$("senti").onchange=()=>{senti=null;loadSentiment();render()};
+$("bot").onclick=()=>{botOn=!botOn;$("bot").textContent=botOn?"Stop bot":"Start bot";$("strat").disabled=botOn;
+  log(botOn?"bot started on "+SYM+": "+$("strat").selectedOptions[0].text:"bot stopped");if(botOn)haltedForDay()};
 
 // ---------- data feeds ----------
 let SYM="SPY",feed=null;
@@ -240,15 +355,16 @@ function render(){
   const eq=equity(),pl=eq-A.start,p=A.pos[SYM],open=p?p.sh*(BID-p.avg):0;
   $("stats").innerHTML=[["Equity",money(eq)],["Total P/L",`<span class="${pl>=0?"pos":"neg"}">${money(pl)}</span>`],["Cash",money(A.cash)],
     [SYM+" position",p?fx(p.sh,4)+" sh":"none"],["Open P/L",`<span class="${open>=0?"pos":"neg"}">${money(open)}</span>`],["Realized",money(A.realized)],
-    ["Orders today",A.orders],["Win rate",A.closed?Math.round(A.wins/A.closed*100)+"% of "+A.closed:"n/a"]]
+    ["Orders today",A.orders],["Today vs start",A.dayStartEq?`<span class="${eq>=A.dayStartEq?"pos":"neg"}">${fx((eq/A.dayStartEq-1)*100)}%</span>`:"n/a"],
+    ["StockTwits",!$("senti").checked?"off":senti?Math.round(senti.bullShare*100)+"% bull ("+senti.tagged+")":"loading"],["Win rate",A.closed?Math.round(A.wins/A.closed*100)+"% of "+A.closed:"n/a"]]
     .map(([k,v])=>`<div class="stat"><span>${k}</span><b>${v}</b></div>`).join("");
 }
 Object.keys(SYMS).forEach(s=>$("sym").insertAdjacentHTML("beforeend",`<option value="${s}">${s} - ${SYMS[s].n}</option>`));
-$("sym").onchange=()=>{SYM=$("sym").value;start()};
+$("sym").onchange=()=>{SYM=$("sym").value;smc=null;clearFvg();senti=null;start();loadSentiment()};
 $("src").onchange=start;
 $("pass").onchange=start;
 $("reset").onclick=()=>{if(!confirm("Reset the fake-money account to $10,000?"))return;A=fresh();saveA();renderLog();drawAvg();markers=[];candles.setMarkers([]);render()};
-renderLog();start();render();
+$("strat").value=A.strat||"smc";showStrat();renderLog();start();render();
 </script>
 </body>
 </html>
