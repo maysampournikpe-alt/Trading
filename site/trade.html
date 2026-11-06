@@ -16,6 +16,7 @@ h1{font-size:1.8rem;margin:32px 0 6px}h2{font-size:1.1rem;margin:0 0 10px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px;overflow-x:auto}
 .row{display:flex;flex-wrap:wrap;gap:10px;align-items:end}
 label{display:flex;flex-direction:column;font-size:.8rem;color:var(--mute);gap:3px}
+select{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 9px;font:inherit}
 input{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:inherit;width:110px}
 button{background:var(--accent);color:var(--bg);border:0;border-radius:8px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer}
 button.sec{background:transparent;color:var(--fg);border:1px solid var(--line)}
@@ -54,11 +55,12 @@ svg{width:100%;height:120px;display:block}
 <div class="card">
   <div class="row">
     <label>How much money? ($)<input id="budget" type="number" value="5000" min="100" step="100"></label>
+    <label>Holding term<select id="term"><option value="long">Long term (buy and hold)</option><option value="medium">Medium term (hours to days)</option><option value="short">Short term (minutes)</option></select></label>
     <button id="start">Start trading</button>
     <button id="auto" class="sec" disabled>Pause</button>
     <button id="reset" class="sec">Reset</button>
   </div>
-  <p class="mute" style="margin:10px 0 0;font-size:.85rem">Keeps 10% in cash, caps any one stock at 25%, and checks every 5 minutes, rebalancing when a stock drifts 1 point off target.</p>
+  <p id="termNote" class="mute" style="margin:10px 0 0;font-size:.85rem"></p>
   <p id="clock" class="mute" style="margin:6px 0 0;font-size:.85rem"></p>
 </div>
 
@@ -137,15 +139,26 @@ function place(o,why){
   log(`PASS ${o.side} ${o.t} ${money(o.usd)} @ ${money(px)} (${why})`,"pos");return true;
 }
 
+// holding terms. All keep 10% cash and cap any one stock at 25% (trader-risk / trader-budget).
+const TERMS={
+  long:{label:"Long term",note:"Buy and hold: copies Berkshire's top 5 (trader-copycat), then checks every 5 minutes and only rebalances when a stock drifts 1 point off target."},
+  medium:{label:"Medium term",note:"Swing trades: buys a stock after a big dip (2 standard deviations below its last 2 hours), sells at +2%, at -1.5%, or after 3 days. Up to 4 positions of 20% each.",
+    win:120,min:60,entryZ:-2,exitZ:1,tp:0.02,sl:-0.015,maxHold:3*1440,cool:120},
+  short:{label:"Short term",note:"Scalps: buys small dips (1.3 standard deviations below its last 15 minutes), sells at +0.3%, at -0.3%, or after 30 minutes. Up to 4 positions of 20% each.",
+    win:15,min:10,entryZ:-1.3,exitZ:0.5,tp:0.003,sl:-0.003,maxHold:30,cool:5}};
+function showTerm(){const k=(S&&S.term)||$("term").value;$("termNote").textContent=TERMS[k].label+": "+TERMS[k].note;$("term").value=k;$("term").disabled=!!S}
+$("term").onchange=showTerm;
 function buyPortfolio(){
-  const budget=+$("budget").value,buf=0.10,cap=0.25;
+  const budget=+$("budget").value,buf=0.10,cap=0.25,term=$("term").value;
   S={seed:20261106,day:0,min:0,last:Date.now(),cash:budget,start:budget,lots:[],log:[],realized:0,auto:false,
      hist:[budget],prices:Object.fromEntries(BASE.map(b=>[b.t,b.px])),
      cfg:{buffer:buf,cap,band:1,vol:0.00127,minOrder:10}};
   const invest=budget*(1-buf),w=targetWeights(cap/(1-buf));
-  S.w=w;
-  log(`Copying Berkshire 13F-HR Q2 2026: budget ${money(budget)}, keeping ${money(budget*buf)} cash, investing ${money(invest)}`);
-  BASE.forEach((b,i)=>place({side:"buy",t:b.t,usd:Math.floor(invest*w[i])},"initial copy"));
+  S.w=w;S.term=term;S.ph={};S.held={};S.cool={};
+  if(term==="long"){
+    log(`Long term: copying Berkshire 13F-HR Q2 2026, budget ${money(budget)}, keeping ${money(budget*buf)} cash, investing ${money(invest)}`);
+    BASE.forEach((b,i)=>place({side:"buy",t:b.t,usd:Math.floor(invest*w[i])},"initial copy"));
+  }else log(`${TERMS[term].label}: budget ${money(budget)} in cash, watching AAPL AXP GOOGL KO BAC for dips`);
   save();render();
 }
 function rebalance(){
@@ -158,12 +171,33 @@ function rebalance(){
   if(orders.length)log(`Rebalance: ${orders.length} stock(s) outside the ${band}-point band`);
   orders.forEach(o=>place(o,`drift ${o.drift>0?"+":""}${o.drift.toFixed(1)} pts`));
 }
+function dipTrade(){
+  const T=TERMS[S.term],h=holdings();
+  BASE.forEach(b=>{
+    const t=b.t,px=S.prices[t],a=(S.ph[t]=S.ph[t]||[]);
+    a.push(px);if(a.length>T.win)a.shift();
+    if(a.length<T.min)return;
+    const m=a.reduce((x,y)=>x+y,0)/a.length,sd=Math.sqrt(a.reduce((x,y)=>x+(y-m)*(y-m),0)/a.length),z=sd>0?(px-m)/sd:0;
+    const sh=h[t]||0;
+    if(sh>1e-9){ // exits
+      const cost=S.lots.filter(l=>l.t===t).reduce((x,l)=>x+l.sh*l.cost,0)/sh,ret=(px-cost)/cost,age=S.min-(S.held[t]||S.min);
+      const why=ret>=T.tp?"take profit":ret<=T.sl?"stop loss":age>=T.maxHold?"time stop":z>=T.exitZ?"back to average":null;
+      if(why&&place({side:"sell",t,usd:Math.floor(sh*px*100)/100},`${why}, ${(ret*100).toFixed(2)}%`)){
+        S.lots=S.lots.filter(l=>l.t!==t);delete S.held[t];S.cool[t]=S.min+T.cool}
+    }else if(z<=T.entryZ&&(S.cool[t]||0)<=S.min&&Object.keys(S.held).length<4){
+      if(place({side:"buy",t,usd:Math.floor(S.start*0.20)},`dip, z=${z.toFixed(2)}`))S.held[t]=S.min;
+    }
+  });
+}
 function stepMinute(){
   if(!S)return;
   S.min++;
   BASE.forEach(b=>{const r=(rng()+rng()+rng()-1.5)*2*S.cfg.vol;S.prices[b.t]=Math.max(1,S.prices[b.t]*(1+r))});
-  if(S.min%5===0)rebalance(); // check every 5 minutes
+  if((S.term||"long")==="long"){if(S.min%5===0)rebalance()} // check every 5 minutes
+  else dipTrade();
   S.hist.push(equity());
+  if(S.hist.length>2000)S.hist=S.hist.filter((v,i)=>i%2===0); // keep the saved account small
+
 }
 // the real clock drives it: one real minute = one simulated minute, catching up after a closed tab
 function tick(){
@@ -179,7 +213,7 @@ function render(){
   if(!has){["stats","pos","lots","log"].forEach(i=>$(i).innerHTML="");$("chart").innerHTML="";return}
   $("auto").textContent=S.auto?"Pause":"Resume";
   const eq=equity(),pl=eq-S.start,h=holdings();
-  $("stats").innerHTML=[["Equity",money(eq)],["P/L",`<span class="${pl>=0?"pos":"neg"}">${money(pl)} (${pct(pl/S.start*100)})</span>`],["Cash",money(S.cash)],["Elapsed",Math.floor(S.min/60)+"h "+(S.min%60)+"m"],["Realized",money(S.realized)]]
+  $("stats").innerHTML=[["Equity",money(eq)],["P/L",`<span class="${pl>=0?"pos":"neg"}">${money(pl)} (${pct(pl/S.start*100)})</span>`],["Cash",money(S.cash)],["Term",TERMS[S.term||"long"].label],["Elapsed",Math.floor(S.min/60)+"h "+(S.min%60)+"m"],["Realized",money(S.realized)]]
     .map(([k,v])=>`<div class="stat"><span>${k}</span><b>${v}</b></div>`).join("");
   $("pos").innerHTML="<tr><th>Ticker</th><th>Shares</th><th>Price</th><th>Value</th><th>Now %</th><th>Target %</th><th>Drift</th></tr>"+
     BASE.map((b,i)=>{const v=(h[b.t]||0)*S.prices[b.t],n=v/eq*100,t=S.w[i]*(1-S.cfg.buffer)*100;
@@ -197,13 +231,14 @@ function setAuto(on){
   if(on){S.last=Date.now();timer=setInterval(tick,1000)}else $("clock").textContent="Paused";
   save();render();
 }
-$("start").onclick=()=>{setAuto(false);if(!(+$("budget").value>=100)){$("budget").value=5000}buyPortfolio();setAuto(true)};
+$("start").onclick=()=>{setAuto(false);if(!(+$("budget").value>=100)){$("budget").value=5000}buyPortfolio();showTerm();setAuto(true)};
 $("auto").onclick=()=>setAuto(!S.auto);
-$("reset").onclick=()=>{setAuto(false);S=null;if(USER)api("state",{method:"PUT",body:JSON.stringify({state:null})}).catch(()=>{});else try{localStorage.removeItem(KEY)}catch(e){}render()};
+$("reset").onclick=()=>{setAuto(false);S=null;showTerm();if(USER)api("state",{method:"PUT",body:JSON.stringify({state:null})}).catch(()=>{});else try{localStorage.removeItem(KEY)}catch(e){}render()};
 function boot(state){
   clearInterval(timer);timer=null;
   S=state&&state.min!==undefined?state:null; // ignore a save from the old day-based version
   if(S)$("budget").value=S.start;
+  showTerm();
   $("auth").hidden=true;$("desk").hidden=false;
   $("who").innerHTML=USER?"Signed in as <b>"+USER+"</b> &middot; <a href='#' id='out'>Sign out</a>":"Guest &middot; <a href='#' id='out'>Sign up to save</a>";
   $("out").onclick=async e=>{e.preventDefault();if(S)S.auto=false;clearInterval(timer);
