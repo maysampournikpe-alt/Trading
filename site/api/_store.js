@@ -29,4 +29,13 @@ async function writeJson(path, obj, { overwrite = true } = {}) {
     await put(path, body, { access: ACCESS, contentType: "application/json", addRandomSuffix: false, allowOverwrite: overwrite });
   } catch (e) { throw wrap(e); }
 }
-module.exports = { readJson, writeJson };
+async function listPaths(prefix) { // all stored paths under a prefix
+  if (memory()) return [...mem.keys()].filter(k => k.startsWith(prefix));
+  try {
+    const { list } = require("@vercel/blob");
+    let cursor, out = [];
+    do { const r = await list({ prefix, cursor, limit: 1000 }); out = out.concat(r.blobs.map(b => b.pathname)); cursor = r.hasMore ? r.cursor : null; } while (cursor);
+    return out;
+  } catch (e) { throw wrap(e); }
+}
+module.exports = { readJson, writeJson, listPaths };
