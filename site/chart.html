@@ -32,6 +32,8 @@ button.sec{background:transparent;color:var(--fg);border:1px solid var(--line)}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
 .stat b{display:block;font-size:1.15rem;font-variant-numeric:tabular-nums}.stat span{font-size:.75rem;color:var(--mute)}
 .pos{color:var(--up)}.neg{color:var(--down)}
+.chk{flex-direction:row!important;align-items:center;gap:6px;color:var(--fg)!important;font-size:.85rem!important}.chk input{width:auto}
+.tbl{border-collapse:collapse;width:100%;font-size:.86rem}.tbl th,.tbl td{text-align:right;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}.tbl th:first-child,.tbl td:first-child,.tbl th:nth-child(2),.tbl td:nth-child(2){text-align:left}.tbl tr.pick{cursor:pointer}.tbl tr.pick:hover{background:var(--bg)}.tbl tr.cur td{font-weight:700}
 #btTable th,#btTable td{text-align:right;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}#btTable th:first-child,#btTable td:first-child,#btTable th:last-child{text-align:left}
 #log{max-height:240px;overflow:auto;font:.8rem/1.5 ui-monospace,Menlo,monospace}
 #log div{padding:2px 0;border-bottom:1px dashed var(--line)}
@@ -40,30 +42,48 @@ button.sec{background:transparent;color:var(--fg);border:1px solid var(--line)}
 </head>
 <body>
 <div class="wrap">
-<p style="margin-top:18px"><a href="/">&larr; Trader Skills</a> &middot; <a href="/trade.html">Paper desk</a> &middot; <a href="/live.html">Live trader</a></p>
+<p style="margin-top:18px"><a href="/">&larr; Home</a></p>
 <h1>Tick Chart Trader</h1>
-<div class="warn"><b>Fake money.</b> Prices update tick by tick. By default it uses <b>real</b> prices from Yahoo Finance (free, no keys; unofficial and possibly a little delayed, and the bid/ask spread is estimated). With your trader passcode it can use Alpaca's real quotes instead (needs Alpaca keys on the server), or you can switch to simulated ticks. Buys fill at the ask and sells at the bid, so the spread costs you, just like a real market. The bot follows the skills' rules (trader-risk: 10% cash buffer, 25% max position, $10 minimum, daily order cap) plus the risk rules day-trading research and educators agree on: risk at most 1% of equity per trade, sized from the stop distance, and stop for the day after a 2% loss. None of these strategies has reliable evidence of beating the market after costs. Not financial advice.</div>
+<p class="mute" style="margin:0 0 12px">Pick any stock, or let the bot find the most active one, then press <b>Start bot</b>. It trades <b>fake money</b> ($10,000) on real prices. Not financial advice.</p>
 
 <div class="card">
-  <div class="row">
-    <label>Symbol<select id="sym"></select></label>
-    <label>Data<select id="src"><option value="yahoo" selected>Real: Yahoo Finance (no keys)</option><option value="real">Real: Alpaca (passcode)</option><option value="sim">Simulated ticks</option></select></label>
-    <label id="passWrap" hidden>Passcode<input id="pass" type="password" autocomplete="off"></label>
-    <label>Order $<input id="qty" type="number" value="1000" min="10" step="100"></label>
-    <label>Bot strategy<select id="strat">
-      <option value="smc">Liquidity sweep + FVG (TJR-style)</option>
-      <option value="orb">Opening range breakout (5 min)</option>
-      <option value="mom">Intraday momentum (last half hour)</option>
-      <option value="mr">Tick mean reversion (scalp)</option>
-    </select></label>
-    <label style="flex-direction:row;align-items:center;gap:6px;color:var(--fg);font-size:.85rem"><input id="vwapF" type="checkbox" style="width:auto"> Only buy above VWAP</label>
-    <label style="flex-direction:row;align-items:center;gap:6px;color:var(--fg);font-size:.85rem"><input id="fomcF" type="checkbox" style="width:auto" checked> Sit out Fed decisions</label>
-    <label style="flex-direction:row;align-items:center;gap:6px;color:var(--fg);font-size:.85rem"><input id="senti" type="checkbox" style="width:auto"> StockTwits sentiment filter</label>
-    <button id="bot">Start bot</button>
-    <button id="reset" class="sec">Reset account</button>
-  </div>
-  <p id="stratNote" class="mute" style="margin:8px 0 0;font-size:.85rem"></p>
-  <p id="msg" class="mute" style="margin:4px 0 0;font-size:.85rem"></p>
+  <form id="symForm" class="row" autocomplete="off">
+    <label>Stock (any ticker)<input id="sym" list="symList" value="SPY" style="width:150px;text-transform:uppercase;font-weight:700"></label>
+    <button type="submit" class="sec">Show</button>
+    <button type="button" id="bot">Start bot</button>
+    <label class="chk"><input id="autoPick" type="checkbox" checked> Let the bot pick the stock</label>
+  </form>
+  <datalist id="symList"></datalist>
+  <p id="msg" class="mute" style="margin:8px 0 0;font-size:.85rem"></p>
+  <details id="adv" style="margin-top:8px">
+    <summary class="mute" style="cursor:pointer;font-size:.85rem">Settings</summary>
+    <div class="row" style="margin-top:10px">
+      <label>Strategy<select id="strat">
+        <option value="auto">Auto: best for the time of day</option>
+        <option value="smc">Liquidity sweep + FVG (TJR-style)</option>
+        <option value="orb">Opening range breakout (5 min)</option>
+        <option value="mom">Intraday momentum (last half hour)</option>
+        <option value="mr">Tick mean reversion (scalp)</option>
+      </select></label>
+      <label>Prices<select id="src"><option value="yahoo" selected>Real: Yahoo Finance</option><option value="real">Real: Alpaca (passcode)</option><option value="sim">Simulated</option></select></label>
+      <label id="passWrap" hidden>Passcode<input id="pass" type="password" autocomplete="off"></label>
+      <label>Order $ (manual BUY/SELL)<input id="qty" type="number" value="1000" min="10" step="100"></label>
+      <button id="reset" type="button" class="sec">Reset account</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label class="chk"><input id="fomcF" type="checkbox" checked> Sit out Fed decisions</label>
+      <label class="chk"><input id="vwapF" type="checkbox"> Only buy above VWAP</label>
+      <label class="chk"><input id="senti" type="checkbox"> StockTwits sentiment filter</label>
+    </div>
+    <p id="stratNote" class="mute" style="margin:8px 0 0;font-size:.82rem"></p>
+    <p class="mute" style="margin:6px 0 0;font-size:.78rem">Rules on every trade: risk at most 1% of the account (sized from the stop), stop buying after a 2% loss in a day, keep 10% cash, no stock over 25%, no short selling. Buys fill at the ask and sells at the bid. Yahoo prices are free but unofficial and may lag; the spread is estimated. None of these strategies has reliable evidence of beating the market after costs.</p>
+  </details>
+</div>
+
+<div class="card" id="scanCard">
+  <h2>Stocks in play</h2>
+  <p class="mute" style="margin:0 0 8px;font-size:.82rem">The most unusually active of 30 popular stocks right now, by volume compared with a normal day at this time. Day-trading research trades these because big volume brings bigger, cleaner moves. Click one to trade it.</p>
+  <div style="overflow-x:auto"><table id="scanTable" class="tbl"></table></div>
 </div>
 
 <div class="card">
@@ -79,8 +99,8 @@ button.sec{background:transparent;color:var(--fg);border:1px solid var(--line)}
 </div>
 
 <div class="card"><div class="stats" id="stats"></div></div>
-<div class="card">
-  <h2>Backtest: does it actually work?</h2>
+<details class="card">
+  <summary style="cursor:pointer;font-weight:600">Backtest: does it actually work?</summary>
   <p class="mute" style="margin:0 0 10px;font-size:.85rem">Runs the exact same rules and filters as the bot over past 1-minute bars, with trading costs, and compares each strategy with simply buying and holding. Yahoo gives about 7 days of 1-minute history; Alpaca (with the passcode) up to 45. On simulated data the result only shows what costs do to random prices.</p>
   <div class="row">
     <label>History<select id="btDays"><option value="5">5 days</option><option value="20" selected>20 days</option><option value="45">45 days</option></select></label>
@@ -89,14 +109,15 @@ button.sec{background:transparent;color:var(--fg);border:1px solid var(--line)}
   </div>
   <p id="btMsg" class="mute" style="margin:8px 0 0;font-size:.85rem"></p>
   <div style="overflow-x:auto"><table id="btTable" style="border-collapse:collapse;width:100%;font-size:.86rem;margin-top:8px"></table></div>
-</div>
+</details>
 <div class="card"><h2>Activity</h2><div id="log"></div></div>
 </div>
 <script src="/vendor/lightweight-charts-4.2.0.js"></script>
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
-const SYMS={SPY:{n:"SPDR S&P 500 ETF Trust",px:735.30},AAPL:{n:"Apple",px:341.27},AXP:{n:"American Express",px:309.84},GOOGL:{n:"Alphabet",px:353.78},KO:{n:"Coca-Cola",px:90.11},BAC:{n:"Bank of America",px:53.96}};
+const NAMES={SPY:"SPDR S&P 500 ETF Trust",QQQ:"Invesco QQQ",AAPL:"Apple",MSFT:"Microsoft",NVDA:"NVIDIA",AMZN:"Amazon",GOOGL:"Alphabet",META:"Meta",TSLA:"Tesla",AMD:"AMD"};
+const POPULAR=["SPY","QQQ","IWM","AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","AMD","AVGO","NFLX","JPM","BAC","XOM","UNH","COST","PLTR","COIN","MU","INTC","SMCI","UBER","DIS","BA","WMT","KO","CRM","SHOP"];
 // bot rules: tick mean reversion, sized and limited by the trader-budget / trader-risk defaults
 const BOT={win:120,minTicks:40,entryZ:-1.8,exitZ:0.3,tp:0.0008,sl:-0.0008,maxHoldS:300,coolS:30,size:0.20};
 const RISK={cashBuffer:0.10,maxPos:0.25,minOrder:10,maxOrdersPerDay:300,riskPerTrade:0.01,dailyLoss:0.02};
@@ -233,10 +254,13 @@ const STRATS={
   smc:"Waits for price to sweep below the lowest low of the last 20 one-minute candles and close back above it (a liquidity grab), then a strong candle that breaks the recent high (break of structure) and leaves a fair value gap. Buys when price pulls back into the middle of that gap, stop under the sweep low (at least one ATR away), target 2x the risk. Long only.",
   orb:"New York session only. Records the high and low of 9:30-9:35 ET, then buys the first break above that range before 11:00 ET, stop at the bottom of the range (or its middle if the range is wide), target 2x the risk, out by 15:55 ET. One trade a day.",
   mom:"New York session only. From Gao et al. (2018): if the first half hour (9:30-10:00 ET) is up, buy at 15:30 ET and sell at 15:59 ET; if it is down, stay out. One trade a day, 20% of equity, stop at -0.5%.",
+  auto:"Uses the strategy that fits the time of day: opening range breakout from 9:35 to 11:00 ET, liquidity sweep + FVG from 11:00 to 15:30, and intraday momentum for the last half hour. Outside market hours it waits.",
   mr:"Scalps tiny dips: buys when price is 1.8 standard deviations below the last 120 ticks, sells at +0.08%, at -0.08%, back at the average, or after 5 minutes."};
 let botOn=false,ticks=[],cool=0,smc=null,day={},fvgLines=[],senti=null,haltedNoted=false;
+function subFor(min,sel){sel=sel||$("strat").value;if(sel!=="auto")return sel;return min<660?"orb":min<930?"smc":"mom"}
+let CUR="smc";
 function showStrat(){$("stratNote").textContent="Strategy: "+STRATS[$("strat").value]}
-$("strat").onchange=()=>{if(botOn){$("strat").value=A.strat||"smc";log("stop the bot before changing strategy","neg");return}A.strat=$("strat").value;saveA();smc=null;clearFvg();showStrat()};
+$("strat").onchange=()=>{if(botOn){$("strat").value=A.strat||"auto";log("stop the bot before changing strategy","neg");return}A.strat=$("strat").value;saveA();smc=null;clearFvg();showStrat()};
 function clearFvg(){fvgLines.forEach(l=>candles.removePriceLine(l));fvgLines=[]}
 function sizeByRisk(entry,stop){ // 1% of equity at risk, capped by the 25% position limit (minus a hair)
   const eq=equity(),per=entry-stop;if(per<=0)return 0;
@@ -262,7 +286,7 @@ function enter(usd,why,stop,target){
   if(haltedForDay())return false;
   const sb=sentimentBlocks()||filterBlocks(bars,bars.length-1,ASK);if(sb){log("skip buy "+SYM+": "+sb,"neg");return false}
   if(!fill("buy",usd,why,"BOT"))return false;
-  const p=A.pos[SYM];p.since=Date.now()/1000;p.stop=stop;p.target=target;p.strat=$("strat").value;saveA();return true;
+  const p=A.pos[SYM];p.since=Date.now()/1000;p.stop=stop;p.target=target;p.strat=CUR;saveA();return true;
 }
 function exitChecks(p,now,ny){ // stop / target / time exits for the rule-based strategies
   if(p.stop&&BID<=p.stop)return "stop";
@@ -273,7 +297,7 @@ function exitChecks(p,now,ny){ // stop / target / time exits for the rule-based 
 }
 function botTick(){
   ticks.push(MID);if(ticks.length>120)ticks.shift();
-  const strat=$("strat").value,ny=nyNow(),now=Date.now()/1000;
+  const ny=nyNow(),strat=subFor(ny.min),now=Date.now()/1000;CUR=strat;
   // opening range and first-half-hour bookkeeping run even while the bot is off
   if(day.d!==ny.day)day={d:ny.day};
   if(ny.min>=570&&ny.min<575){day.orH=Math.max(day.orH||0,MID);day.orL=Math.min(day.orL||1e9,MID)}
@@ -317,7 +341,7 @@ function botTick(){
 // liquidity sweep -> break of structure -> fair value gap, evaluated when each 1-minute candle closes
 function onBarClose(){
   drawVwap();
-  if(!botOn||$("strat").value!=="smc"||A.pos[SYM])return;
+  if(!botOn||subFor(nyNow().min)!=="smc"||A.pos[SYM])return;
   const n=bars.length-1,b=bars[n],r=smcStep(smc,bars,n);smc=r.st;
   if(r.ev==="expired"){log("FVG setup expired");clearFvg()}
   if(r.ev==="sweep"){
@@ -345,11 +369,11 @@ $("bot").onclick=()=>{botOn=!botOn;$("bot").textContent=botOn?"Stop bot":"Start 
 // ---------- backtest: the same rules over past 1-minute bars, with costs ----------
 // Fills: entries and exits at the bar's price plus/minus the cost; if a bar touches both stop and target, the stop counts (conservative).
 function backtest(B,strat,costPct){
-  const c=costPct/100,cash0=10000;let eq=cash0,pos=null,st=null,day={},cool=-1,peak=eq,maxDD=0;const trades=[];
+  const c=costPct/100,cash0=10000;let eq=cash0,pos=null,st=null,day={},cool=-1,peak=eq,maxDD=0,s2=strat;const trades=[];
   const close=(price,i,why)=>{const px=price*(1-c),ret=px/pos.entry-1;eq+=pos.usd*ret;trades.push({ret,why,bars:i-pos.i});pos=null;st=null;cool=i+1};
   const open=(price,i,stop,target,usdFrac)=>{const px=price*(1+c);
     const usd=usdFrac?eq*usdFrac:Math.min(eq*RISK.riskPerTrade/Math.max(px-stop,px*1e-4)*px,eq*(RISK.maxPos-0.005));
-    pos={entry:px,stop,target,usd,i,strat}};
+    pos={entry:px,stop,target,usd,i,strat:s2}};
   for(let i=1;i<B.length;i++){
     const b=B[i],et=etBar(b);
     if(day.d!==et.day){day={d:et.day,start:eq};st=null}
@@ -359,23 +383,24 @@ function backtest(B,strat,costPct){
     if(pos){ // exits
       if(pos.stop&&b.low<=pos.stop){close(Math.min(b.open,pos.stop),i,"stop")}
       else if(pos.target&&b.high>=pos.target){close(Math.max(b.open,pos.target),i,"target")}
-      else if((strat==="orb"&&et.min>=955)||(strat==="mom"&&et.min>=959)||(strat==="smc"&&i-pos.i>=45)){close(b.close,i,"time")}
-      else if(strat==="mr"){const ret=b.close/pos.entry-1;let m=0,sd=0;for(let k=i-29;k<=i;k++)m+=B[k].close;m/=30;for(let k=i-29;k<=i;k++)sd+=(B[k].close-m)**2;sd=Math.sqrt(sd/30);
+      else if((pos.strat==="orb"&&et.min>=955)||(pos.strat==="mom"&&et.min>=959)||(pos.strat==="smc"&&i-pos.i>=45)){close(b.close,i,"time")}
+      else if(pos.strat==="mr"){const ret=b.close/pos.entry-1;let m=0,sd=0;for(let k=i-29;k<=i;k++)m+=B[k].close;m/=30;for(let k=i-29;k<=i;k++)sd+=(B[k].close-m)**2;sd=Math.sqrt(sd/30);
         if(ret>=0.0008||ret<=-0.0008||i-pos.i>=5||(sd>0&&(b.close-m)/sd>=0.3))close(b.close,i,"exit")}
       else if(etBar(B[i]).day!==etBar(B[i-1]).day){close(b.open,i,"new day")}
     }
     if(!pos&&i>=cool){ // entries
+      s2=subFor(et.min,strat);
       const halted=eq<=day.start*(1-RISK.dailyLoss);
       const ok=price=>!halted&&!filterBlocks(B,i-1,price);
-      if(strat==="smc"){
+      if(s2==="smc"){
         if(st&&st.phase==="fvg"&&b.low<=st.entry&&b.open>st.stop){const px=Math.min(b.open,st.entry);if(ok(px))open(px,i,st.stop,px+2*(px-st.stop));st=null}
         if(!pos){const r=smcStep(st,B,i);st=r.st}
-      }else if(strat==="orb"){
+      }else if(s2==="orb"){
         if(day.orH&&!day.orbDone&&et.min>=575&&et.min<660&&b.high>day.orH){const px=Math.max(b.open,day.orH),range=day.orH-day.orL,stop=range/day.orH>0.004?(day.orH+day.orL)/2:day.orL;
           day.orbDone=true;if(ok(px))open(px,i,stop,px+2*(px-stop))}
-      }else if(strat==="mom"){
+      }else if(s2==="mom"){
         if(day.ret30!=null&&!day.momDone&&et.min>=930&&et.min<955){day.momDone=true;if(day.ret30>0&&ok(b.open))open(b.open,i,b.open*0.995,0,0.20)}
-      }else if(strat==="mr"&&i>=30){
+      }else if(s2==="mr"&&i>=30){
         let m=0,sd=0;for(let k=i-29;k<=i;k++)m+=B[k].close;m/=30;for(let k=i-29;k<=i;k++)sd+=(B[k].close-m)**2;sd=Math.sqrt(sd/30);
         if(sd>0&&(b.close-m)/sd<=-1.8&&ok(b.close))open(b.close,i+1<B.length?i:i,0,0,0.20);
       }
@@ -406,7 +431,7 @@ $("btRun").onclick=async()=>{
   }catch(e){$("btMsg").textContent="Could not load history: "+e.message;return}
   if(!B||B.length<100){$("btMsg").textContent="Not enough bars to test ("+(B?B.length:0)+").";return}
   const bh=B[B.length-1].close/B[0].open-1;
-  const names={smc:"Liquidity sweep + FVG",orb:"Opening range breakout",mom:"Intraday momentum",mr:"Tick mean reversion"};
+  const names={auto:"Auto (time of day)",smc:"Liquidity sweep + FVG",orb:"Opening range breakout",mom:"Intraday momentum",mr:"Tick mean reversion"};
   const pc=x=>(x>=0?"+":"")+(x*100).toFixed(2)+"%";
   const rows=Object.keys(names).map(k=>{const r=backtest(B,k,cost),[v,cl]=verdict(r,bh);
     return`<tr><td>${names[k]}</td><td>${r.n}</td><td>${r.n?Math.round(r.winRate*100)+"%":"-"}</td><td>${r.n?pc(r.avg):"-"}</td><td>${r.n?(r.pf===Infinity?"inf":r.pf.toFixed(2)):"-"}</td><td class="${r.net>=0?"pos":"neg"}">${pc(r.net)}</td><td>${pc(-r.maxDD)}</td><td class="${cl}" style="text-align:left;white-space:normal">${v}</td></tr>`});
@@ -425,7 +450,7 @@ function onQuote(bid,ask,vol){
 }
 // simulated: a random walk ticking twice a second, with a realistic spread
 function simFeed(){
-  const base=A.last[SYM]||SYMS[SYM].px,step=0.00012;
+  const base=A.last[SYM]||(SYM==="SPY"?735.3:100),step=0.00012;
   let mid=base;const list=[],now=Math.floor(Date.now()/1000/60)*60;
   let p=base;for(let i=240;i>0;i--){ // 4 hours of 1-minute history
     const o=p,c=o*(1+(Math.random()-.5)*2*step*Math.sqrt(120)*0.6);
@@ -466,6 +491,7 @@ function yahooFeed(){
   (async()=>{
     try{
       const h=await get("&days=1");if(stop)return;
+      if(h.name){NAMES[SYM]=h.name;setTitle()}
       if(!h.bars.length)throw new Error("no bars returned");
       setBars(h.bars.slice(-600).map(b=>({...b,time:b.time+TZ})));
       $("msg").textContent="Real data from Yahoo Finance: "+h.bars.length+" one-minute bars; price checked every 2 seconds (spread estimated). Outside market hours the price does not move.";
@@ -476,9 +502,10 @@ function yahooFeed(){
   })();
   return()=>{stop=true;clearInterval(timer);clearInterval(refresh)};
 }
+function setTitle(){$("title").textContent=SYM+(NAMES[SYM]?" · "+NAMES[SYM]:"")+" · 1m"}
 function start(){
   if(feed)feed();ticks=[];BID=ASK=MID=0;
-  $("title").textContent=SYM+" · "+SYMS[SYM].n+" · 1m";
+  setTitle();
   $("passWrap").hidden=$("src").value!=="real";
   if($("src").value==="real"){if(!$("pass").value){$("msg").textContent="Enter your trader passcode to stream real data.";feed=null;return}feed=realFeed()}
   else if($("src").value==="yahoo")feed=yahooFeed();
@@ -492,18 +519,45 @@ function render(){
     $("ohlc").innerHTML=`O<b class="${c}">${fx(cur.open)}</b> H<b class="${c}">${fx(cur.high)}</b> L<b class="${c}">${fx(cur.low)}</b> C<b class="${c}">${fx(cur.close)}</b> <b class="${c}">${chg>=0?"+":""}${fx(chg)} (${chg>=0?"+":""}${fx(chg/first.open*100)}%)</b>`}
   if(BID){$("bid").textContent=fx(BID);$("ask").textContent=fx(ASK);$("spread").textContent=fx(ASK-BID)}
   const eq=equity(),pl=eq-A.start,p=A.pos[SYM],open=p?p.sh*(BID-p.avg):0;
-  $("stats").innerHTML=[["Equity",money(eq)],["Total P/L",`<span class="${pl>=0?"pos":"neg"}">${money(pl)}</span>`],["Cash",money(A.cash)],
-    [SYM+" position",p?fx(p.sh,4)+" sh":"none"],["Open P/L",`<span class="${open>=0?"pos":"neg"}">${money(open)}</span>`],["Realized",money(A.realized)],
-    ["Orders today",A.orders],["Today vs start",A.dayStartEq?`<span class="${eq>=A.dayStartEq?"pos":"neg"}">${fx((eq/A.dayStartEq-1)*100)}%</span>`:"n/a"],
-    ["StockTwits",!$("senti").checked?"off":senti?Math.round(senti.bullShare*100)+"% bull ("+senti.tagged+")":"loading"],["Win rate",A.closed?Math.round(A.wins/A.closed*100)+"% of "+A.closed:"n/a"]]
+  $("stats").innerHTML=[["Account",money(eq)],["Profit / loss",`<span class="${pl>=0?"pos":"neg"}">${money(pl)}</span>`],
+    [SYM+" held",p?fx(p.sh,4)+" sh":"none"],["Open trade",p?`<span class="${open>=0?"pos":"neg"}">${money(open)}</span>`:"-"],
+    ["Bot",botOn?(subFor(nyNow().min)==="mr"||(nyNow().min>=570&&nyNow().min<960)?"trading":"waiting for 9:30 ET"):"off"],
+    ["Win rate",A.closed?Math.round(A.wins/A.closed*100)+"% of "+A.closed:"no trades yet"]]
     .map(([k,v])=>`<div class="stat"><span>${k}</span><b>${v}</b></div>`).join("");
 }
-Object.keys(SYMS).forEach(s=>$("sym").insertAdjacentHTML("beforeend",`<option value="${s}">${s} - ${SYMS[s].n}</option>`));
-$("sym").onchange=()=>{SYM=$("sym").value;smc=null;clearFvg();senti=null;start();loadSentiment()};
+POPULAR.forEach(s=>$("symList").insertAdjacentHTML("beforeend",`<option value="${s}">`));
+function switchSym(sym,why){
+  sym=String(sym||"").trim().toUpperCase();
+  if(!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(sym)){$("msg").textContent="That does not look like a ticker.";return false}
+  const p=A.pos[SYM];
+  if(botOn&&p&&p.sh>1e-9&&sym!==SYM){$("msg").textContent="The bot is holding "+SYM+"; it will switch after it sells.";return false}
+  SYM=sym;$("sym").value=sym;A.sym=sym;saveA();smc=null;clearFvg();senti=null;ticks=[];day={};
+  start();loadSentiment();renderScan();if(why)log("now trading "+sym+": "+why);return true;
+}
+$("symForm").onsubmit=e=>{e.preventDefault();$("autoPick").checked=false;switchSym($("sym").value,"chosen by you")};
+// scanner: stocks in play, refreshed every 5 minutes; the bot only switches stock when it holds nothing
+let scan=null;
+function renderScan(){
+  if(!scan){return}
+  const pc=x=>(x>=0?"+":"")+(x*100).toFixed(2)+"%";
+  $("scanTable").innerHTML="<tr><th>#</th><th>Stock</th><th>Price</th><th>Today</th><th>Volume vs normal</th></tr>"+
+    scan.rows.slice(0,8).map((r,i)=>`<tr class="pick${r.symbol===SYM?" cur":""}" data-s="${r.symbol}"><td>${i+1}</td><td>${r.symbol} <span class="mute">${(r.name||"").replace(/</g,"")}</span></td><td>${fx(r.price)}</td><td class="${r.change>=0?"pos":"neg"}">${pc(r.change)}</td><td>${r.relVol.toFixed(1)}x</td></tr>`).join("");
+  $("scanTable").querySelectorAll("tr.pick").forEach(tr=>tr.onclick=()=>{$("autoPick").checked=false;switchSym(tr.dataset.s,"chosen from the scanner")});
+}
+async function runScan(){
+  try{const r=await fetch("/api/scan"),j=await r.json();if(!r.ok)throw new Error(j.error||r.status);
+    scan=j;scan.rows.forEach(x=>{if(x.name)NAMES[x.symbol]=x.name});renderScan();
+    if(j.session!=="live")$("scanCard").querySelector("p").insertAdjacentHTML("beforeend",' <b>Market closed: showing the last session.</b>');
+    const top=j.rows[0];
+    if($("autoPick").checked&&top&&top.symbol!==SYM)switchSym(top.symbol,"most active stock ("+top.relVol.toFixed(1)+"x normal volume)");
+  }catch(e){$("scanTable").innerHTML=`<tr><td class="mute">Scanner unavailable (${e.message}). You can still type any ticker above.</td></tr>`}
+}
+setInterval(()=>{if($("autoPick").checked||!scan)runScan()},5*60*1000);
+$("autoPick").onchange=()=>{if($("autoPick").checked)runScan()};
 $("src").onchange=start;
 $("pass").onchange=start;
 $("reset").onclick=()=>{if(!confirm("Reset the fake-money account to $10,000?"))return;A=fresh();saveA();renderLog();drawAvg();markers=[];candles.setMarkers([]);render()};
-$("strat").value=A.strat||"smc";showStrat();renderLog();start();render();
+$("strat").value=A.strat||"auto";if(A.sym){SYM=A.sym;$("sym").value=SYM}showStrat();renderLog();start();render();runScan();
 </script>
 </body>
 </html>
