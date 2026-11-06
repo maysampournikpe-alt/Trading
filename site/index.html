@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trader Skills</title>
+<meta name="description" content="Eleven Claude skills that copy investors, watch the news and Congress, size trades to your budget, and never place an order without your yes.">
+<style>
+:root{--bg:#fafaf8;--fg:#1a1a18;--mute:#62625c;--card:#fff;--line:#e4e4de;--accent:#0b6b4f}
+@media (prefers-color-scheme:dark){:root{--bg:#121413;--fg:#ecece8;--mute:#9a9a92;--card:#1b1d1c;--line:#2c2f2d;--accent:#4fd1a1}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}
+.wrap{max-width:960px;margin:0 auto;padding:0 16px}
+header{padding:72px 0 40px}
+h1{font-size:clamp(2rem,6vw,3.2rem);line-height:1.1;margin:0 0 16px;letter-spacing:-.02em}
+.lead{font-size:1.15rem;color:var(--mute);max-width:640px;margin:0 0 24px}
+.badge{display:inline-block;border:1px solid var(--line);border-radius:99px;padding:4px 12px;font-size:.85rem;color:var(--accent);margin-bottom:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px;margin:0 0 56px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px}
+.card h3{margin:0 0 2px;font-size:1.05rem}
+.card code{color:var(--accent);font-size:.85rem}
+.card p{margin:8px 0 0;color:var(--mute);font-size:.93rem}
+h2{font-size:1.5rem;margin:0 0 16px}
+pre{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;overflow-x:auto;font-size:.88rem}
+ol{padding-left:20px}li{margin-bottom:8px}
+section{margin-bottom:48px}
+footer{border-top:1px solid var(--line);padding:24px 0 48px;color:var(--mute);font-size:.85rem}
+a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="badge">Paper trading by default</span>
+  <h1>Trade like the people you trust, with a seatbelt.</h1>
+  <p class="lead">Eleven Claude skills that copy investors from their SEC filings, watch the news and Congress, size every trade to your budget, and never place an order without your explicit yes.</p>
+</header>
+
+<section>
+  <h2>The eleven</h2>
+  <div class="grid">
+    <div class="card"><h3>Reverse Engineer</h3><code>/trader-copycat</code><p>Rebuilds an investor's portfolio from their 13F filing, with what they bought, trimmed and sold.</p></div>
+    <div class="card"><h3>News Monitor</h3><code>/trader-news</code><p>Headlines and 8-K filings for the stocks you hold, shown once and flagged by relevance.</p></div>
+    <div class="card"><h3>Budget Manager</h3><code>/trader-budget</code><p>Sizes positions to your money with a cash buffer and a per-stock cap.</p></div>
+    <div class="card"><h3>Pelosi Tracker</h3><code>/trader-pelosi</code><p>Reads House STOCK Act disclosures as they post and turns each PDF into clean rows.</p></div>
+    <div class="card"><h3>Earnings Analyst</h3><code>/trader-analyst</code><p>Margins, EPS and growth quarter by quarter, straight from SEC EDGAR.</p></div>
+    <div class="card"><h3>Stock Screener</h3><code>/trader-screener</code><p>Checks companies against your own rules and says which rule each one fails.</p></div>
+    <div class="card"><h3>Price Alerts</h3><code>/trader-alerts</code><p>Targets, stops, percent moves and the NYSE opening bell. Each rings once.</p></div>
+    <div class="card"><h3>Rebalancer</h3><code>/trader-rebalance</code><p>Trades only the stocks that drift outside your band, sells listed before buys.</p></div>
+    <div class="card"><h3>Risk Manager</h3><code>/trader-risk</code><p>Blocks any order that breaks your limits before it can reach the broker.</p></div>
+    <div class="card"><h3>Tax Optimizer</h3><code>/trader-tax</code><p>Cost-basis lots, short vs long term, loss harvesting and wash-sale checks. Not tax advice.</p></div>
+    <div class="card"><h3>Order Executor</h3><code>/trader-broker</code><p>Shows each order as a ticket and records your yes before your broker connector is called.</p></div>
+  </div>
+</section>
+
+<section>
+  <h2>How it flows</h2>
+  <ol>
+    <li><b>Copy or screen</b>: pick an investor or shortlist stocks.</li>
+    <li><b>Size</b>: the budget skill turns weights into dollar orders. Nothing is placed.</li>
+    <li><b>Check</b>: the risk skill passes or blocks every order.</li>
+    <li><b>Approve</b>: you say yes to each order, then Claude's own Allow once card asks again.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>Install</h2>
+<pre>/plugin marketplace add Jakeschincariol/trader-skill
+/plugin install trader-skill@trader-skill</pre>
+  <p>Or copy the <code>trader-*</code> folders into <code>.claude/skills/</code>. Python 3.8+, nothing to pip install. Set <code>SEC_USER_AGENT</code> to your name and email for SEC requests.</p>
+</section>
+
+<footer>Skills by <a href="https://github.com/jakeschincariol/trader-skill">jakeschincariol/trader-skill</a> (MIT). Education and tooling, not financial advice.</footer>
+</div>
+</body>
+</html>
