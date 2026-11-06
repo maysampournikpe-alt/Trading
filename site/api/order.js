@@ -1,4 +1,4 @@
-const { TRADING, SYMBOLS, MAX_ORDER_USD, alpaca, guard } = require("./_alpaca");
+const { DAILY_LOSS_PCT, TRADING, SYMBOLS, MAX_ORDER_USD, alpaca, guard } = require("./_alpaca");
 const recent = []; // best-effort rate limit per warm instance
 module.exports = guard(async (req, res) => {
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
@@ -17,6 +17,8 @@ module.exports = guard(async (req, res) => {
     const usd = Number(b.notional);
     if (!(usd >= 1 && usd <= MAX_ORDER_USD)) return res.status(400).json({ error: `notional must be between $1 and $${MAX_ORDER_USD}` });
     const equity = Number(account.equity);
+    const day = (equity - Number(account.last_equity)) / Number(account.last_equity) * 100;
+    if (day <= -DAILY_LOSS_PCT) return res.status(400).json({ error: `daily loss limit hit (${day.toFixed(2)}%): buying is halted for today` });
     if (Number(account.cash) - usd < equity * 0.10) return res.status(400).json({ error: "risk: would dip into the 10% cash buffer" });
     const cur = Number((positions.find(p => p.symbol === symbol) || {}).market_value || 0);
     if ((cur + usd) / equity > 0.25) return res.status(400).json({ error: "risk: position would exceed 25% of equity" });
