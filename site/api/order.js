@@ -1,0 +1,29 @@
+const { TRADING, SYMBOLS, MAX_ORDER_USD, alpaca, guard } = require("./_alpaca");
+const recent = []; // best-effort rate limit per warm instance
+module.exports = guard(async (req, res) => {
+  if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
+  const b = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
+  const { symbol, side } = b;
+  if (!SYMBOLS.includes(symbol)) return res.status(400).json({ error: "symbol not on the allowlist" });
+  if (side !== "buy" && side !== "sell") return res.status(400).json({ error: "side must be buy or sell" });
+  const now = Date.now();
+  while (recent.length && now - recent[0] > 60000) recent.shift();
+  if (recent.length >= 20) return res.status(429).json({ error: "too many orders this minute" });
+
+  const [account, positions] = await Promise.all([alpaca(TRADING, "/account"), alpaca(TRADING, "/positions")]);
+  const held = Number((positions.find(p => p.symbol === symbol) || {}).qty || 0);
+  let order = { symbol, side, type: "market", time_in_force: "day" };
+  if (side === "buy") {
+    const usd = Number(b.notional);
+    if (!(usd >= 1 && usd <= MAX_ORDER_USD)) return res.status(400).json({ error: `notional must be between $1 and $${MAX_ORDER_USD}` });
+    if (usd > Number(account.cash) * 0.5) return res.status(400).json({ error: "order is more than half the cash" });
+    order.notional = usd.toFixed(2);
+  } else {
+    const qty = Number(b.qty);
+    if (!(qty > 0) || qty > held + 1e-9) return res.status(400).json({ error: "no short sales: qty must not exceed the position" });
+    order.qty = String(qty);
+  }
+  recent.push(now);
+  const placed = await alpaca(TRADING, "/orders", { method: "POST", body: JSON.stringify(order) });
+  res.status(200).json({ id: placed.id, status: placed.status, symbol, side });
+});
