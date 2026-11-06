@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paper Trading Desk</title>
+<style>
+:root{--bg:#fafaf8;--fg:#1a1a18;--mute:#62625c;--card:#fff;--line:#e4e4de;--accent:#0b6b4f;--bad:#b3261e}
+@media (prefers-color-scheme:dark){:root{--bg:#121413;--fg:#ecece8;--mute:#9a9a92;--card:#1b1d1c;--line:#2c2f2d;--accent:#4fd1a1;--bad:#ff8a80}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+.wrap{max-width:960px;margin:0 auto;padding:0 16px 48px}
+h1{font-size:1.8rem;margin:32px 0 6px}h2{font-size:1.1rem;margin:0 0 10px}
+.mute{color:var(--mute)}a{color:var(--accent)}
+.warn{border:1px solid var(--line);border-left:4px solid var(--accent);background:var(--card);padding:10px 14px;border-radius:8px;margin:14px 0;font-size:.9rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px;overflow-x:auto}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:end}
+label{display:flex;flex-direction:column;font-size:.8rem;color:var(--mute);gap:3px}
+input{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:inherit;width:110px}
+button{background:var(--accent);color:var(--bg);border:0;border-radius:8px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer}
+button.sec{background:transparent;color:var(--fg);border:1px solid var(--line)}
+button:disabled{opacity:.5;cursor:default}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+th,td{text-align:right;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.stat b{display:block;font-size:1.3rem}.stat span{font-size:.78rem;color:var(--mute)}
+.pos{color:var(--accent)}.neg{color:var(--bad)}
+#log{max-height:260px;overflow:auto;font:.82rem/1.5 ui-monospace,Menlo,monospace}
+#log div{padding:2px 0;border-bottom:1px dashed var(--line)}
+svg{width:100%;height:120px;display:block}
+</style>
+</head>
+<body>
+<div class="wrap">
+<p style="margin-top:20px"><a href="/">&larr; Trader Skills</a></p>
+<h1>Paper Trading Desk</h1>
+<p class="mute">Copies Berkshire Hathaway's top 5 from its Q2 2026 13F, sizes it to your budget, risk-checks every order, then rebalances on its own as prices move.</p>
+<div class="warn"><b>Simulation only.</b> Virtual money, no broker. Starting prices are a snapshot from the skills' bundled data (Nov 2026); every new day after that is a random walk, not market data. Auto mode places simulated orders without asking, a deliberate change from the skills' yes-before-every-order rule, since nothing real is at stake. Not financial advice.</div>
+
+<div class="card">
+  <div class="row">
+    <label>Budget $<input id="budget" type="number" value="5000" min="100" step="100"></label>
+    <label>Cash buffer %<input id="buffer" type="number" value="10" min="0" max="50"></label>
+    <label>Max per stock %<input id="cap" type="number" value="25" min="10" max="100"></label>
+    <label>Rebalance band (pts)<input id="band" type="number" value="5" min="1" max="20"></label>
+    <label>Daily volatility %<input id="vol" type="number" value="2.5" min="0" max="10" step="0.5"></label>
+    <button id="start">Buy the portfolio</button>
+    <button id="auto" class="sec" disabled>Auto: off</button>
+    <button id="step" class="sec" disabled>Next day</button>
+    <button id="reset" class="sec">Reset</button>
+  </div>
+</div>
+
+<div class="card"><div class="stats" id="stats"></div><svg id="chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg></div>
+<div class="card"><h2>Positions</h2><table id="pos"></table></div>
+<div class="card"><h2>Tax lots</h2><table id="lots"></table><p class="mute" style="margin:8px 0 0;font-size:.8rem">Short term until held more than 365 simulated days. Arithmetic only, not tax advice.</p></div>
+<div class="card"><h2>Order log</h2><div id="log"></div></div>
+</div>
+<script>
+"use strict";
+// Snapshot from trader-skill fixtures: Berkshire 13F-HR Q2 2026, top 5 renormalised.
+const BASE=[
+ {t:"AAPL",n:"Apple",w:30.67,px:341.27},{t:"AXP",n:"American Express",w:23.85,px:309.84},
+ {t:"GOOGL",n:"Alphabet",w:17.56,px:353.78},{t:"KO",n:"Coca-Cola",w:15.11,px:90.11},
+ {t:"BAC",n:"Bank of America",w:12.80,px:53.96}];
+const KEY="paperdesk.v1", $=id=>document.getElementById(id);
+let S=null, timer=null;
+const money=x=>(x<0?"-":"")+"$"+Math.abs(x).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const pct=x=>(x>=0?"+":"")+x.toFixed(2)+"%";
+function rng(){let a=S.seed+=0x6D2B79F5;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+function load(){try{return JSON.parse(localStorage.getItem(KEY))}catch(e){return null}}
+function log(m,cls){S.log.unshift({day:S.day,m,cls});S.log=S.log.slice(0,300)}
+
+// trader-budget: shares out the excess of any stock above the cap
+function targetWeights(capFrac){
+  let w=BASE.map(b=>b.w/100),capped=new Set();
+  for(let i=0;i<10;i++){
+    let over=false;
+    w.forEach((x,k)=>{if(!capped.has(k)&&x>capFrac+1e-9){w[k]=capFrac;capped.add(k);over=true}});
+    if(!over)break;
+    const fixed=[...capped].reduce((s,k)=>s+w[k],0),free=w.reduce((s,x,k)=>capped.has(k)?s:s+BASE[k].w/100,0);
+    w=w.map((x,k)=>capped.has(k)?x:BASE[k].w/100/free*(1-fixed));
+  }
+  return w;
+}
+const holdings=()=>{const h={};S.lots.forEach(l=>h[l.t]=(h[l.t]||0)+l.sh);return h};
+const equity=()=>{const h=holdings();return S.cash+BASE.reduce((s,b)=>s+(h[b.t]||0)*S.prices[b.t],0)};
+
+// trader-risk: PASS or BLOCK with a reason
+function risk(o){
+  const eq=equity(),cfg=S.cfg;
+  if(o.usd<cfg.minOrder)return "below the $"+cfg.minOrder+" minimum order";
+  if(o.side==="buy"){
+    if(S.cash-o.usd<cfg.buffer*eq-1)return "would dip into the cash buffer";
+    const h=holdings(),after=((h[o.t]||0)*S.prices[o.t]+o.usd)/eq;
+    if(after>cfg.cap+0.005)return "position would be "+(after*100).toFixed(1)+"%, over the "+(cfg.cap*100)+"% cap";
+    if(o.usd>S.cash+0.005)return "not enough cash";
+  }else{
+    const h=holdings();
+    if(o.usd>(h[o.t]||0)*S.prices[o.t]+0.005)return "short sales are off";
+  }
+  return null;
+}
+function place(o,why){
+  const bl=risk(o);
+  if(bl){log(`BLOCK ${o.side} ${o.t} ${money(o.usd)}: ${bl}`,"neg");return false}
+  const px=S.prices[o.t],sh=o.usd/px;
+  if(o.side==="buy"){S.cash-=o.usd;S.lots.push({t:o.t,sh,cost:px,day:S.day})}
+  else{ // highest cost first, as in trader-tax
+    let need=sh,lots=S.lots.filter(l=>l.t===o.t).sort((a,b)=>b.cost-a.cost),real=0;
+    for(const l of lots){if(need<=1e-9)break;const take=Math.min(l.sh,need);real+=take*(px-l.cost);l.sh-=take;need-=take}
+    S.lots=S.lots.filter(l=>l.sh>1e-9);S.cash+=o.usd;S.realized+=real;
+  }
+  log(`PASS ${o.side} ${o.t} ${money(o.usd)} @ ${money(px)} (${why})`,"pos");return true;
+}
+
+function buyPortfolio(){
+  const budget=+$("budget").value,buf=+$("buffer").value/100,cap=+$("cap").value/100;
+  S={seed:20261106,day:0,cash:budget,start:budget,lots:[],log:[],realized:0,auto:false,
+     hist:[budget],prices:Object.fromEntries(BASE.map(b=>[b.t,b.px])),
+     cfg:{buffer:buf,cap,band:+$("band").value,vol:+$("vol").value/100,minOrder:10}};
+  const invest=budget*(1-buf),w=targetWeights(cap/(1-buf));
+  S.w=w;
+  log(`Copying Berkshire 13F-HR Q2 2026: budget ${money(budget)}, keeping ${money(budget*buf)} cash, investing ${money(invest)}`);
+  BASE.forEach((b,i)=>place({side:"buy",t:b.t,usd:Math.floor(invest*w[i])},"initial copy"));
+  save();render();
+}
+function rebalance(){
+  const eq=equity(),h=holdings(),band=S.cfg.band,orders=[];
+  BASE.forEach((b,i)=>{
+    const tgt=S.w[i]*(1-S.cfg.buffer),now=(h[b.t]||0)*S.prices[b.t]/eq,drift=(now-tgt)*100;
+    if(Math.abs(drift)>band)orders.push({side:drift>0?"sell":"buy",t:b.t,usd:Math.round(Math.abs(now-tgt)*eq*100)/100,drift});
+  });
+  orders.sort((a,b)=>(a.side==="sell"?0:1)-(b.side==="sell"?0:1)); // sells first
+  if(orders.length)log(`Rebalance: ${orders.length} stock(s) outside the ${band}-point band`);
+  orders.forEach(o=>place(o,`drift ${o.drift>0?"+":""}${o.drift.toFixed(1)} pts`));
+}
+function nextDay(){
+  if(!S)return;
+  S.day++;
+  BASE.forEach(b=>{const r=(rng()+rng()+rng()-1.5)*2*S.cfg.vol;S.prices[b.t]=Math.max(1,S.prices[b.t]*(1+r))});
+  if(S.day%5===0)rebalance(); // weekly check
+  S.hist.push(equity());save();render();
+}
+function render(){
+  const has=!!S;
+  $("auto").disabled=$("step").disabled=!has;
+  if(!has){["stats","pos","lots","log"].forEach(i=>$(i).innerHTML="");$("chart").innerHTML="";return}
+  $("auto").textContent="Auto: "+(S.auto?"on":"off");
+  const eq=equity(),pl=eq-S.start,h=holdings();
+  $("stats").innerHTML=[["Equity",money(eq)],["P/L",`<span class="${pl>=0?"pos":"neg"}">${money(pl)} (${pct(pl/S.start*100)})</span>`],["Cash",money(S.cash)],["Day",S.day],["Realized",money(S.realized)]]
+    .map(([k,v])=>`<div class="stat"><span>${k}</span><b>${v}</b></div>`).join("");
+  $("pos").innerHTML="<tr><th>Ticker</th><th>Shares</th><th>Price</th><th>Value</th><th>Now %</th><th>Target %</th><th>Drift</th></tr>"+
+    BASE.map((b,i)=>{const v=(h[b.t]||0)*S.prices[b.t],n=v/eq*100,t=S.w[i]*(1-S.cfg.buffer)*100;
+      return`<tr><td>${b.t} <span class="mute">${b.n}</span></td><td>${(h[b.t]||0).toFixed(4)}</td><td>${money(S.prices[b.t])}</td><td>${money(v)}</td><td>${n.toFixed(2)}%</td><td>${t.toFixed(2)}%</td><td class="${Math.abs(n-t)>S.cfg.band?"neg":""}">${(n-t>=0?"+":"")+(n-t).toFixed(2)}</td></tr>`}).join("");
+  $("lots").innerHTML="<tr><th>Ticker</th><th>Bought (day)</th><th>Shares</th><th>Cost</th><th>Gain</th><th>Term</th></tr>"+
+    S.lots.slice().sort((a,b)=>a.t.localeCompare(b.t)||a.day-b.day).map(l=>{const g=l.sh*(S.prices[l.t]-l.cost);
+      return`<tr><td>${l.t}</td><td>${l.day}</td><td>${l.sh.toFixed(4)}</td><td>${money(l.cost)}</td><td class="${g>=0?"pos":"neg"}">${money(g)}</td><td>${S.day-l.day>365?"long":"short"}</td></tr>`}).join("");
+  $("log").innerHTML=S.log.map(e=>`<div class="${e.cls||""}">[day ${e.day}] ${e.m.replace(/</g,"&lt;")}</div>`).join("");
+  const H=S.hist,mn=Math.min(...H),mx=Math.max(...H),sp=(mx-mn)||1,
+    pts=H.map((v,i)=>`${H.length>1?i/(H.length-1)*600:0},${110-(v-mn)/sp*100}`).join(" ");
+  $("chart").innerHTML=`<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+}
+function setAuto(on){
+  if(!S)return;S.auto=on;clearInterval(timer);timer=null;
+  if(on)timer=setInterval(nextDay,1200);save();render();
+}
+$("start").onclick=()=>{setAuto(false);buyPortfolio()};
+$("step").onclick=nextDay;
+$("auto").onclick=()=>setAuto(!S.auto);
+$("reset").onclick=()=>{setAuto(false);S=null;try{localStorage.removeItem(KEY)}catch(e){}render()};
+S=load();if(S){["budget","buffer","cap","band","vol"].forEach((k,i)=>{});$("budget").value=S.start;} 
+render();if(S&&S.auto)setAuto(true);
+</script>
+</body>
+</html>
