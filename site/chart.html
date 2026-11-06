@@ -42,12 +42,12 @@ button.sec{background:transparent;color:var(--fg);border:1px solid var(--line)}
 <div class="wrap">
 <p style="margin-top:18px"><a href="/">&larr; Trader Skills</a> &middot; <a href="/trade.html">Paper desk</a> &middot; <a href="/live.html">Live trader</a></p>
 <h1>Tick Chart Trader</h1>
-<div class="warn"><b>Fake money.</b> Prices update tick by tick. By default the ticks are <b>simulated</b>; enter your trader passcode to stream <b>real</b> quotes and 1-minute bars from Alpaca (IEX feed, needs the Alpaca keys on the server). Buys fill at the ask and sells at the bid, so the spread costs you, just like a real market. The bot follows the skills' rules (trader-risk: 10% cash buffer, 25% max position, $10 minimum, daily order cap) plus the risk rules day-trading research and educators agree on: risk at most 1% of equity per trade, sized from the stop distance, and stop for the day after a 2% loss. None of these strategies has reliable evidence of beating the market after costs. Not financial advice.</div>
+<div class="warn"><b>Fake money.</b> Prices update tick by tick. By default it uses <b>real</b> prices from Yahoo Finance (free, no keys; unofficial and possibly a little delayed, and the bid/ask spread is estimated). With your trader passcode it can use Alpaca's real quotes instead (needs Alpaca keys on the server), or you can switch to simulated ticks. Buys fill at the ask and sells at the bid, so the spread costs you, just like a real market. The bot follows the skills' rules (trader-risk: 10% cash buffer, 25% max position, $10 minimum, daily order cap) plus the risk rules day-trading research and educators agree on: risk at most 1% of equity per trade, sized from the stop distance, and stop for the day after a 2% loss. None of these strategies has reliable evidence of beating the market after costs. Not financial advice.</div>
 
 <div class="card">
   <div class="row">
     <label>Symbol<select id="sym"></select></label>
-    <label>Data<select id="src"><option value="sim">Simulated ticks</option><option value="real">Real (Alpaca)</option></select></label>
+    <label>Data<select id="src"><option value="yahoo" selected>Real: Yahoo Finance (no keys)</option><option value="real">Real: Alpaca (passcode)</option><option value="sim">Simulated ticks</option></select></label>
     <label id="passWrap" hidden>Passcode<input id="pass" type="password" autocomplete="off"></label>
     <label>Order $<input id="qty" type="number" value="1000" min="10" step="100"></label>
     <label>Bot strategy<select id="strat">
@@ -81,7 +81,7 @@ button.sec{background:transparent;color:var(--fg);border:1px solid var(--line)}
 <div class="card"><div class="stats" id="stats"></div></div>
 <div class="card">
   <h2>Backtest: does it actually work?</h2>
-  <p class="mute" style="margin:0 0 10px;font-size:.85rem">Runs the exact same rules and filters as the bot over past 1-minute bars, with trading costs, and compares each strategy with simply buying and holding. Real data needs the passcode (Data: Real). On simulated data the result only shows what costs do to random prices.</p>
+  <p class="mute" style="margin:0 0 10px;font-size:.85rem">Runs the exact same rules and filters as the bot over past 1-minute bars, with trading costs, and compares each strategy with simply buying and holding. Yahoo gives about 7 days of 1-minute history; Alpaca (with the passcode) up to 45. On simulated data the result only shows what costs do to random prices.</p>
   <div class="row">
     <label>History<select id="btDays"><option value="5">5 days</option><option value="20" selected>20 days</option><option value="45">45 days</option></select></label>
     <label>Cost per side (%)<input id="btCost" type="number" value="0.02" min="0" step="0.01"></label>
@@ -400,6 +400,8 @@ $("btRun").onclick=async()=>{
   $("btTable").innerHTML="";$("btMsg").textContent="Loading history...";
   try{
     if($("src").value==="real"){const h=await api("bars?symbol="+SYM+"&days="+$("btDays").value);B=h.bars.map(b=>({...b,time:b.time+TZ}))}
+    else if($("src").value==="yahoo"){const d=Math.min(7,+$("btDays").value),r=await fetch("/api/market?symbol="+SYM+"&days="+d),h=await r.json();if(!r.ok)throw new Error(h.error||r.status);
+      if(+$("btDays").value>7)$("btMsg").textContent="Yahoo keeps about 7 days of 1-minute bars, so testing 7 days.";B=h.bars.map(b=>({...b,time:b.time+TZ}))}
     else{B=bars.slice(0,-1)}
   }catch(e){$("btMsg").textContent="Could not load history: "+e.message;return}
   if(!B||B.length<100){$("btMsg").textContent="Not enough bars to test ("+(B?B.length:0)+").";return}
@@ -410,9 +412,9 @@ $("btRun").onclick=async()=>{
     return`<tr><td>${names[k]}</td><td>${r.n}</td><td>${r.n?Math.round(r.winRate*100)+"%":"-"}</td><td>${r.n?pc(r.avg):"-"}</td><td>${r.n?(r.pf===Infinity?"inf":r.pf.toFixed(2)):"-"}</td><td class="${r.net>=0?"pos":"neg"}">${pc(r.net)}</td><td>${pc(-r.maxDD)}</td><td class="${cl}" style="text-align:left;white-space:normal">${v}</td></tr>`});
   $("btTable").innerHTML="<tr><th>Strategy</th><th>Trades</th><th>Win rate</th><th>Avg trade</th><th>Profit factor</th><th>Net return</th><th>Max drawdown</th><th>Verdict</th></tr>"+rows.join("")+
     `<tr><td>Buy and hold ${SYM}</td><td>1</td><td></td><td></td><td></td><td class="${bh>=0?"pos":"neg"}">${pc(bh)}</td><td></td><td class="mute" style="text-align:left">the benchmark</td></tr>`;
-  const real=$("src").value==="real";
+  const real=$("src").value!=="sim";
   $("btMsg").textContent=`${SYM}: ${B.length.toLocaleString()} one-minute bars over ${new Set(B.map(b=>etBar(b).day)).size} days, ${cost}% cost per side, filters: ${[$("vwapF").checked&&"VWAP",$("fomcF").checked&&"Fed",].filter(Boolean).join(" + ")||"none"}. `+
-    (real?"Testing 4 strategies on one period means the best one looks better than it really is; trust only a result that holds on other periods and symbols.":"Simulated random prices: no strategy can have a real edge here, so this only shows the cost of trading.");
+    ($("src").value==="yahoo"&&+$("btDays").value>7?"Yahoo only keeps about 7 days of 1-minute bars. ":"")+(real?"Testing 4 strategies on one period means the best one looks better than it really is; trust only a result that holds on other periods and symbols.":"Simulated random prices: no strategy can have a real edge here, so this only shows the cost of trading.");
 };
 
 // ---------- data feeds ----------
@@ -454,7 +456,23 @@ function realFeed(){
       const poll=async()=>{try{const q=await api("quotes?symbols="+SYM),x=q.quotes[SYM];if(x&&!stop)onQuote(x.bid,x.ask,0)}catch(e){$("msg").textContent="Quote error: "+e.message}};
       poll();timer=setInterval(poll,1000);
       refresh=setInterval(async()=>{try{const r=await api("bars?symbol="+SYM+"&limit=2");for(const b of r.bars){const t=b.time+TZ;if(cur&&t===cur.time){cur.volume=b.volume;vols.update({time:t,value:b.volume,color:colorOf(cur)})}}}catch(e){}},30000);
-    }catch(e){$("msg").textContent="Could not load real data: "+e.message+". Showing simulated ticks instead.";$("src").value="sim";start()}
+    }catch(e){$("src").value="sim";start();$("msg").textContent="Could not load Alpaca data ("+e.message+"), so showing simulated ticks."}
+  })();
+  return()=>{stop=true;clearInterval(timer);clearInterval(refresh)};
+}
+function yahooFeed(){
+  let stop=false,timer=null,refresh=null;
+  const get=async q=>{const r=await fetch("/api/market?symbol="+SYM+q);const j=await r.json().catch(()=>({error:"bad response"}));if(!r.ok)throw new Error(j.error||("HTTP "+r.status));return j};
+  (async()=>{
+    try{
+      const h=await get("&days=1");if(stop)return;
+      if(!h.bars.length)throw new Error("no bars returned");
+      setBars(h.bars.slice(-600).map(b=>({...b,time:b.time+TZ})));
+      $("msg").textContent="Real data from Yahoo Finance: "+h.bars.length+" one-minute bars; price checked every 2 seconds (spread estimated). Outside market hours the price does not move.";
+      const poll=async()=>{try{const q=await get("");if(stop)return;const half=Math.max(0.005,q.price*0.00005);onQuote(q.price-half,q.price+half,0)}catch(e){$("msg").textContent="Yahoo price error: "+e.message}};
+      poll();timer=setInterval(poll,2000);
+      refresh=setInterval(async()=>{try{const r=await get("&days=1");for(const b of r.bars.slice(-3)){const t=b.time+TZ;if(cur&&t===cur.time){cur.volume=b.volume;vols.update({time:t,value:b.volume,color:colorOf(cur)})}}}catch(e){}},30000);
+    }catch(e){$("src").value="sim";start();$("msg").textContent="Could not load Yahoo data ("+e.message+"), so showing simulated ticks. Try Real again in a minute."}
   })();
   return()=>{stop=true;clearInterval(timer);clearInterval(refresh)};
 }
@@ -463,7 +481,8 @@ function start(){
   $("title").textContent=SYM+" · "+SYMS[SYM].n+" · 1m";
   $("passWrap").hidden=$("src").value!=="real";
   if($("src").value==="real"){if(!$("pass").value){$("msg").textContent="Enter your trader passcode to stream real data.";feed=null;return}feed=realFeed()}
-  else{$("msg").textContent="Simulated ticks (twice a second). Choose Real (Alpaca) for live market data.";feed=simFeed()}
+  else if($("src").value==="yahoo")feed=yahooFeed();
+  else{$("msg").textContent="Simulated ticks (twice a second). Choose a Real data source for market prices.";feed=simFeed()}
   drawAvg();
 }
 
