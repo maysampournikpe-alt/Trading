@@ -33,11 +33,24 @@ svg{width:100%;height:120px;display:block}
 </head>
 <body>
 <div class="wrap">
-<p style="margin-top:20px"><a href="/">&larr; Trader Skills</a> &middot; <a href="/live.html">Live paper trader</a></p>
+<p style="margin-top:20px"><a href="/">&larr; Trader Skills</a> &middot; <a href="/live.html">Live paper trader</a> <span id="who" style="float:right"></span></p>
 <h1>Paper Trading Desk</h1>
 <p class="mute">Copies Berkshire Hathaway's top 5 from its Q2 2026 13F, sizes it to your budget, risk-checks every order, then rebalances on its own as the market moves, in real time: one real minute is one minute here.</p>
-<div class="warn"><b>Fake money, real clock.</b> Nothing here is real money and no broker is involved. Time runs like the real world: every real minute that passes is one simulated minute, and prices update once a minute. If you close the tab and come back, it catches up on the minutes you missed. Starting prices are a snapshot from the skills' bundled data (Nov 2026); each minute after that is a random walk, not market data. It places simulated orders by itself. Not financial advice.</div>
+<div class="warn"><b>Fake money, real clock.</b> Nothing here is real money and no broker is involved. Sign up to save your desk to an account, or continue as a guest (saved in this browser only). Time runs like the real world: every real minute that passes is one simulated minute, and prices update once a minute. If you close the tab and come back, it catches up on the minutes you missed. Starting prices are a snapshot from the skills' bundled data (Nov 2026); each minute after that is a random walk, not market data. It places simulated orders by itself. Not financial advice.</div>
 
+<div class="card" id="auth" hidden>
+  <h2>Sign up or log in</h2>
+  <p class="mute" style="margin:0 0 10px;font-size:.88rem">Your account saves your portfolio, tax lots and order log so the desk keeps running on the real clock and you can pick it up on any device.</p>
+  <div class="row">
+    <label>Username<input id="user" autocomplete="username" maxlength="20"></label>
+    <label>Password (8+ characters)<input id="pw" type="password" autocomplete="current-password"></label>
+    <button id="signup">Sign up</button>
+    <button id="login" class="sec">Log in</button>
+    <button id="guest" class="sec">Continue as guest</button>
+  </div>
+  <p id="autherr" class="neg" style="margin:8px 0 0;font-size:.85rem"></p>
+</div>
+<div id="desk" hidden>
 <div class="card">
   <div class="row">
     <label>How much money? ($)<input id="budget" type="number" value="5000" min="100" step="100"></label>
@@ -54,6 +67,7 @@ svg{width:100%;height:120px;display:block}
 <div class="card"><h2>Tax lots</h2><table id="lots"></table><p class="mute" style="margin:8px 0 0;font-size:.8rem">Short term until held more than a simulated year. Arithmetic only, not tax advice.</p></div>
 <div class="card"><h2>Order log</h2><div id="log"></div></div>
 </div>
+</div>
 <script>
 "use strict";
 // Snapshot from trader-skill fixtures: Berkshire 13F-HR Q2 2026, top 5 renormalised.
@@ -66,7 +80,17 @@ let S=null, timer=null;
 const money=x=>(x<0?"-":"")+"$"+Math.abs(x).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const pct=x=>(x>=0?"+":"")+x.toFixed(2)+"%";
 function rng(){let a=S.seed+=0x6D2B79F5;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+let USER=null,saveT=null;
+async function api(path,opt){
+  const r=await fetch("/api/"+path,{credentials:"same-origin",headers:{"content-type":"application/json"},...opt});
+  const j=await r.json().catch(()=>({error:"server not reachable"}));
+  if(!r.ok)throw new Error(j.error||("HTTP "+r.status));return j;
+}
+function save(){
+  if(USER){ // signed in: keep the account copy up to date (at most one write every 2s)
+    if(!saveT)saveT=setTimeout(async()=>{saveT=null;if(!USER||!S)return;try{await api("state",{method:"PUT",body:JSON.stringify({state:S})})}catch(e){$("clock").textContent="Could not save to your account: "+e.message}},2000);
+  }else{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+}
 function load(){try{return JSON.parse(localStorage.getItem(KEY))}catch(e){return null}}
 function log(m,cls){S.log.unshift({min:S.min,m,cls});S.log=S.log.slice(0,300)}
 
@@ -175,10 +199,33 @@ function setAuto(on){
 }
 $("start").onclick=()=>{setAuto(false);if(!(+$("budget").value>=100)){$("budget").value=5000}buyPortfolio();setAuto(true)};
 $("auto").onclick=()=>setAuto(!S.auto);
-$("reset").onclick=()=>{setAuto(false);S=null;try{localStorage.removeItem(KEY)}catch(e){}render()};
-S=load();if(S&&S.min===undefined)S=null; // drop a save from the old day-based version
-if(S){$("budget").value=S.start;}
-render();if(S&&S.auto){timer=setInterval(tick,1000);tick()}
+$("reset").onclick=()=>{setAuto(false);S=null;if(USER)api("state",{method:"PUT",body:JSON.stringify({state:null})}).catch(()=>{});else try{localStorage.removeItem(KEY)}catch(e){}render()};
+function boot(state){
+  clearInterval(timer);timer=null;
+  S=state&&state.min!==undefined?state:null; // ignore a save from the old day-based version
+  if(S)$("budget").value=S.start;
+  $("auth").hidden=true;$("desk").hidden=false;
+  $("who").innerHTML=USER?"Signed in as <b>"+USER+"</b> &middot; <a href='#' id='out'>Sign out</a>":"Guest &middot; <a href='#' id='out'>Sign up to save</a>";
+  $("out").onclick=async e=>{e.preventDefault();if(S)S.auto=false;clearInterval(timer);
+    if(USER){if(S)try{await api("state",{method:"PUT",body:JSON.stringify({state:S})})}catch(x){}try{await api("auth",{method:"POST",body:JSON.stringify({action:"logout"})})}catch(x){}}
+    USER=null;S=null;$("desk").hidden=true;$("who").textContent="";$("auth").hidden=false;render()};
+  render();if(S&&S.auto){timer=setInterval(tick,1000);tick()}
+}
+async function enter(){ // after sign up or log in: load this user's saved desk
+  const r=await api("state");boot(r.state);
+}
+async function submit(action){
+  $("autherr").textContent="";
+  try{const j=await api("auth",{method:"POST",body:JSON.stringify({action,username:$("user").value,password:$("pw").value})});
+    USER=j.username;$("pw").value="";await enter()}
+  catch(e){$("autherr").textContent=e.message}
+}
+$("signup").onclick=()=>submit("signup");$("login").onclick=()=>submit("login");
+$("pw").onkeydown=e=>{if(e.key==="Enter")submit("login")};
+$("guest").onclick=()=>{USER=null;boot(load())};
+(async()=>{ // already signed in? (cookie) otherwise show the sign-up card
+  try{const me=await api("auth");USER=me.username;await enter()}catch(e){$("auth").hidden=false}
+})();
 </script>
 </body>
 </html>

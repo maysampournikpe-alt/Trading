@@ -1,0 +1,5 @@
+{
+  "name": "trader-skills-site",
+  "private": true,
+  "dependencies": { "@vercel/blob": "^2.8.2" }
+}
