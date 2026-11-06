@@ -80,6 +80,30 @@ button.sec{background:transparent;color:var(--fg);border:1px solid var(--line)}
   </details>
 </div>
 
+<div class="card" id="srvCard">
+  <h2>Keep trading when this tab is closed</h2>
+  <div id="srvOut">
+    <p class="mute" style="margin:0 0 8px;font-size:.85rem">Sign up (free, just a username and password) and the bot runs on the server with its own $10,000 fake-money account, even with this page closed.</p>
+    <form id="srvAuth" class="row" autocomplete="on">
+      <label>Username<input id="srvUser" autocomplete="username" maxlength="20"></label>
+      <label>Password (8+ characters)<input id="srvPw" type="password" autocomplete="current-password"></label>
+      <button type="button" id="srvSignup">Sign up</button>
+      <button type="button" id="srvLogin" class="sec">Log in</button>
+    </form>
+    <p id="srvErr" class="neg" style="margin:8px 0 0;font-size:.85rem"></p>
+  </div>
+  <div id="srvIn" hidden>
+    <div class="row" style="align-items:center">
+      <button type="button" id="srvToggle">Run on the server</button>
+      <span id="srvState" class="mute" style="font-size:.88rem"></span>
+      <span style="margin-left:auto;font-size:.85rem" class="mute">Signed in as <b id="srvName"></b> &middot; <a href="#" id="srvOutLink">Sign out</a> &middot; <a href="#" id="srvReset">Reset server account</a></span>
+    </div>
+    <div class="stats" id="srvStats" style="margin-top:10px"></div>
+    <div id="srvLog" style="margin-top:8px;max-height:180px;overflow:auto;font:.8rem/1.5 ui-monospace,Menlo,monospace"></div>
+    <p class="mute" style="margin:8px 0 0;font-size:.78rem">The server checks the market every 5 minutes on weekdays from 9:30 to 4:00 ET and trades on real 1-minute candles with the same rules as the bot on this page. It picks its stock once a day (the most active one, or the stock you chose) and uses the strategy and filters set here when you press Run; changes made later apply from the next trading day.</p>
+  </div>
+</div>
+
 <div class="card" id="scanCard">
   <h2>Stocks in play</h2>
   <p class="mute" style="margin:0 0 8px;font-size:.82rem">The most unusually active of 30 popular stocks right now, by volume compared with a normal day at this time. Day-trading research trades these because big volume brings bigger, cleaner moves. Click one to trade it.</p>
@@ -442,6 +466,41 @@ $("btRun").onclick=async()=>{
     ($("src").value==="yahoo"&&+$("btDays").value>7?"Yahoo only keeps about 7 days of 1-minute bars. ":"")+(real?"Testing 4 strategies on one period means the best one looks better than it really is; trust only a result that holds on other periods and symbols.":"Simulated random prices: no strategy can have a real edge here, so this only shows the cost of trading.");
 };
 
+// ---------- server bot (runs with the tab closed) ----------
+let SRV=null;
+async function srvApi(method,body,path="bot"){
+  const r=await fetch("/api/"+path,{method,credentials:"same-origin",headers:{"content-type":"application/json"},body:body?JSON.stringify(body):undefined});
+  const j=await r.json().catch(()=>({error:"server not reachable"}));if(!r.ok)throw Object.assign(new Error(j.error||("HTTP "+r.status)),{status:r.status});return j;
+}
+function srvRender(){
+  const signed=!!SRV;$("srvOut").hidden=signed;$("srvIn").hidden=!signed;if(!signed)return;
+  const d=SRV.day,eq=d?d.markEq:SRV.equity,pl=eq-SRV.start,today=d?eq-d.startEq:0,pos=d&&d.pos;
+  $("srvName").textContent=SRV.user;
+  $("srvToggle").textContent=SRV.enabled?"Stop the server bot":"Run on the server";
+  $("srvToggle").className=SRV.enabled?"sec":"";
+  const s=SRV.settings,names={auto:"Auto",smc:"Sweep + FVG",orb:"Opening range",mom:"Momentum",mr:"Mean reversion"};
+  $("srvState").innerHTML=SRV.enabled?`<b class="pos">Running</b> &middot; ${s.autoPick?"picks the most active stock":"trades "+s.symbol} &middot; ${names[s.strat]||s.strat} &middot; last check ${SRV.lastTick?new Date(SRV.lastTick).toLocaleTimeString():"not yet"}`:"Off. Press Run to keep trading with the tab closed.";
+  $("srvStats").innerHTML=[["Server account",money(eq)],["Total P/L",`<span class="${pl>=0?"pos":"neg"}">${money(pl)}</span>`],["Today",d?`<span class="${today>=0?"pos":"neg"}">${money(today)}</span> on ${d.symbol}`:"-"],
+    ["Holding",pos?fx(pos.shares,4)+" "+d.symbol:"nothing"],["Trades today",d?d.events.filter(e=>e.side==="sell").length:0],["Days traded",SRV.history.length+(d?1:0)]]
+    .map(([k,v])=>`<div class="stat"><span>${k}</span><b>${v}</b></div>`).join("");
+  $("srvLog").innerHTML=SRV.log.slice(0,30).map(e=>`<div>${new Date(e.t).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}  ${e.m.replace(/</g,"&lt;")}</div>`).join("");
+}
+async function srvLoad(){try{SRV=await srvApi("GET")}catch(e){SRV=null}srvRender()}
+async function srvAuth(action){
+  $("srvErr").textContent="";
+  try{await srvApi("POST",{action,username:$("srvUser").value,password:$("srvPw").value},"auth");$("srvPw").value="";await srvLoad()}
+  catch(e){$("srvErr").textContent=e.message}
+}
+$("srvSignup").onclick=()=>srvAuth("signup");$("srvLogin").onclick=()=>srvAuth("login");
+$("srvPw").onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();srvAuth("login")}};
+$("srvToggle").onclick=async()=>{
+  try{SRV=await srvApi("POST",SRV.enabled?{action:"stop"}:{action:"start",settings:{strat:$("strat").value,autoPick:$("autoPick").checked,symbol:SYM,fomc:$("fomcF").checked,vwap:$("vwapF").checked}});srvRender()}
+  catch(e){$("srvState").textContent="Could not reach the server: "+e.message}
+};
+$("srvReset").onclick=async e=>{e.preventDefault();if(!confirm("Reset the server account to $10,000 and stop the server bot?"))return;try{SRV=await srvApi("POST",{action:"reset"});srvRender()}catch(x){}};
+$("srvOutLink").onclick=async e=>{e.preventDefault();try{await srvApi("POST",{action:"logout"},"auth")}catch(x){}SRV=null;srvRender()};
+setInterval(async()=>{if(SRV&&SRV.enabled){try{await fetch("/api/tick")}catch(e){}srvLoad()}},60000); // an open page also nudges the server
+
 // ---------- data feeds ----------
 let SYM="SPY",feed=null;
 function onQuote(bid,ask,vol){
@@ -557,7 +616,7 @@ $("autoPick").onchange=()=>{if($("autoPick").checked)runScan()};
 $("src").onchange=start;
 $("pass").onchange=start;
 $("reset").onclick=()=>{if(!confirm("Reset the fake-money account to $10,000?"))return;A=fresh();saveA();renderLog();drawAvg();markers=[];candles.setMarkers([]);render()};
-$("strat").value=A.strat||"auto";if(A.sym){SYM=A.sym;$("sym").value=SYM}showStrat();renderLog();start();render();runScan();
+$("strat").value=A.strat||"auto";if(A.sym){SYM=A.sym;$("sym").value=SYM}showStrat();renderLog();start();render();runScan();srvLoad();
 </script>
 </body>
 </html>

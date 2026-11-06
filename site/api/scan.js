@@ -22,15 +22,20 @@ async function scanOne(symbol) {
   const hi = Math.max(...today.map(b => b.high)), lo = Math.min(...today.map(b => b.low));
   return { symbol, name: nameOf(r.meta), price, change: price / prevClose - 1, range: (hi - lo) / price, relVol: avgPrev > 0 ? todayVol / avgPrev : null, volume: todayVol, asOfMin: now, day: keys[keys.length - 1] };
 }
-module.exports = async (req, res) => {
-  res.setHeader("cache-control", "public, s-maxage=60, stale-while-revalidate=120");
-  if (last && Date.now() - last.at < 60000) return res.status(200).json(last.data);
+async function runScan() {
+  if (last && Date.now() - last.at < 60000) return last.data;
   const settled = await Promise.allSettled(UNIVERSE.map(scanOne));
   const rows = settled.map(s => s.status === "fulfilled" ? s.value : null).filter(Boolean).filter(r => r.relVol != null);
-  if (!rows.length) return res.status(502).json({ error: "could not load any stocks from Yahoo" });
+  if (!rows.length) throw Object.assign(new Error("could not load any stocks from Yahoo"), { status: 502 });
   rows.sort((a, b) => b.relVol - a.relVol || Math.abs(b.change) - Math.abs(a.change));
   const now = et(Math.floor(Date.now() / 1000)), day = rows[0].day;
   const data = { at: new Date().toISOString(), session: day === now.day && now.min >= 570 && now.min < 960 ? "live" : "last", scanned: UNIVERSE.length, rows };
   last = { at: Date.now(), data };
-  res.status(200).json(data);
+  return data;
+}
+module.exports = async (req, res) => {
+  res.setHeader("cache-control", "public, s-maxage=60, stale-while-revalidate=120");
+  try { res.status(200).json(await runScan()); }
+  catch (e) { res.status(e.status || 502).json({ error: e.message }); }
 };
+module.exports.runScan = runScan;

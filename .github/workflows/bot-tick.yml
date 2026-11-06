@@ -1,0 +1,16 @@
+# Wakes the server trading bot every 5 minutes on weekdays during US market hours
+# (13:00-21:55 UTC covers 9:30-16:00 ET in both summer and winter time; the site
+# ignores calls outside the session). GitHub may delay scheduled runs by a few minutes.
+name: Wake the server bot
+on:
+  schedule:
+    - cron: "*/5 13-21 * * 1-5"
+  workflow_dispatch:
+permissions: {}
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Call the tick endpoint
+        run: curl -fsS --max-time 90 https://trader-skills-app-7a27.vercel.app/api/tick || echo "tick failed; the next run will catch up"
