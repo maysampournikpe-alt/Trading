@@ -4,7 +4,26 @@ const LIVE = process.env.ALPACA_MODE === "live";
 const TRADING = LIVE ? "https://api.alpaca.markets/v2" : "https://paper-api.alpaca.markets/v2";
 const DAILY_LOSS_PCT = Number(process.env.DAILY_LOSS_PCT || 3); // buys stop when equity is this % below yesterday's close
 const DATA = "https://data.alpaca.markets/v2";
-const SYMBOLS = ["AAPL", "AXP", "GOOGL", "KO", "BAC", "SPY"];
+const SYMBOLS = ["AAPL", "AXP", "GOOGL", "KO", "BAC", "SPY"]; // defaults only; any valid ticker is allowed
+const TICKER = /^[A-Z][A-Z0-9.\-]{0,9}$/;
+const cleanSymbol = s => { const t = String(s || "").trim().toUpperCase(); return TICKER.test(t) ? t : null; };
+const MIN_PRICE = Number(process.env.MIN_PRICE || 5); // no penny stocks
+const assetCache = new Map();
+// Is this a stock the bot may trade? Active, tradable US equity on a listed exchange (no OTC).
+async function checkAsset(symbol, needFractional) {
+  let a = assetCache.get(symbol);
+  if (!a || Date.now() - a.at > 3600e3) {
+    try { a = { at: Date.now(), v: await alpaca(TRADING, "/assets/" + encodeURIComponent(symbol)) }; }
+    catch (e) { if (e.status === 404) return "unknown ticker " + symbol; throw e; }
+    assetCache.set(symbol, a);
+  }
+  const v = a.v;
+  if (v.class !== "us_equity") return symbol + " is not a US stock";
+  if (v.status !== "active" || !v.tradable) return symbol + " is not tradable";
+  if (v.exchange === "OTC") return symbol + " trades over the counter (not allowed)";
+  if (needFractional && !v.fractionable) return symbol + " does not support dollar-amount (fractional) orders";
+  return null;
+}
 const MAX_ORDER_USD = Number(process.env.MAX_ORDER_USD || 500);
 
 function authorized(req) {
@@ -36,4 +55,4 @@ function guard(fn) {
     catch (e) { res.status(e.status && e.status < 600 ? e.status : 500).json({ error: e.message }); }
   };
 }
-module.exports = { LIVE, DAILY_LOSS_PCT, TRADING, DATA, SYMBOLS, MAX_ORDER_USD, alpaca, guard };
+module.exports = { LIVE, DAILY_LOSS_PCT, TRADING, DATA, SYMBOLS, MAX_ORDER_USD, MIN_PRICE, cleanSymbol, checkAsset, alpaca, guard };

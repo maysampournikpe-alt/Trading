@@ -1,8 +1,8 @@
-const { DATA, SYMBOLS, alpaca, guard } = require("./_alpaca");
+const { DATA, SYMBOLS, cleanSymbol, alpaca, guard } = require("./_alpaca");
 module.exports = guard(async (req, res) => {
-  const want = String((req.query && req.query.symbols) || "").split(",").filter(s => SYMBOLS.includes(s));
+  const want = [...new Set(String((req.query && req.query.symbols) || "").split(",").map(cleanSymbol).filter(Boolean))].slice(0, 10);
   const list = want.length ? want : SYMBOLS;
-  const d = await alpaca(DATA, "/stocks/quotes/latest?feed=iex&symbols=" + list.join(","));
+  const d = await alpaca(DATA, "/stocks/quotes/latest?feed=iex&symbols=" + list.map(encodeURIComponent).join(","));
   const out = {};
   for (const s of list) {
     const q = d.quotes && d.quotes[s];

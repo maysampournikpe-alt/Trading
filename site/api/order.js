@@ -1,10 +1,10 @@
-const { DAILY_LOSS_PCT, TRADING, SYMBOLS, MAX_ORDER_USD, alpaca, guard } = require("./_alpaca");
+const { DAILY_LOSS_PCT, TRADING, DATA, MAX_ORDER_USD, MIN_PRICE, cleanSymbol, checkAsset, alpaca, guard } = require("./_alpaca");
 const recent = []; // best-effort rate limit per warm instance
 module.exports = guard(async (req, res) => {
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
   const b = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
-  const { symbol, side } = b;
-  if (!SYMBOLS.includes(symbol)) return res.status(400).json({ error: "symbol not on the allowlist" });
+  const symbol = cleanSymbol(b.symbol), side = b.side;
+  if (!symbol) return res.status(400).json({ error: "that does not look like a ticker" });
   if (side !== "buy" && side !== "sell") return res.status(400).json({ error: "side must be buy or sell" });
   const now = Date.now();
   while (recent.length && now - recent[0] > 60000) recent.shift();
@@ -22,6 +22,11 @@ module.exports = guard(async (req, res) => {
     if (Number(account.cash) - usd < equity * 0.10) return res.status(400).json({ error: "risk: would dip into the 10% cash buffer" });
     const cur = Number((positions.find(p => p.symbol === symbol) || {}).market_value || 0);
     if ((cur + usd) / equity > 0.25) return res.status(400).json({ error: "risk: position would exceed 25% of equity" });
+    const bad = await checkAsset(symbol, true);
+    if (bad) return res.status(400).json({ error: bad });
+    const t = await alpaca(DATA, `/stocks/${encodeURIComponent(symbol)}/trades/latest?feed=iex`);
+    const px = Number(t && t.trade && t.trade.p);
+    if (!(px >= MIN_PRICE)) return res.status(400).json({ error: `${symbol} is under $${MIN_PRICE} a share (penny stocks are not allowed)` });
     order.notional = usd.toFixed(2);
   } else {
     const qty = Number(b.qty);
