@@ -44,10 +44,18 @@ th:first-child,td:first-child{text-align:left}
     <label>Passcode<input id="pass" type="password" autocomplete="off"></label>
     <label>Horizon<select id="horizon"><option value="short">Short term (minutes)</option><option value="medium">Medium term (hours to days)</option><option value="long">Long term (buy and hold)</option></select></label>
     <label>$ per trade (max 500)<input id="size" type="number" value="200" min="10" max="500" step="10"></label>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <label>Stocks to trade (any tickers, up to 10)<input id="watch" style="width:300px;text-transform:uppercase" placeholder="AAPL, NVDA, TSLA"></label>
+    <button id="setWatch" class="sec" type="button">Use these</button>
+    <button id="inPlay" class="sec" type="button">Use today's stocks in play</button>
+  </div>
+  <div class="row" style="margin-top:10px">
     <button id="go">Connect</button>
     <button id="toggle" class="sec" disabled>Start trading</button>
     <button id="flat" class="sec" disabled>Sell everything</button>
   </div>
+  <p class="mute" style="margin:10px 0 0;font-size:.8rem">Every buy is checked on the server: the stock must be an active, tradable US stock on a listed exchange (no OTC), at least $5 a share, and support dollar-amount orders. Positions in stocks you remove from the list are left alone; use Sell everything to close them.</p>
   <p id="horizonNote" class="mute" style="margin:10px 0 0;font-size:.85rem"></p>
   <p id="msg" class="mute" style="margin:10px 0 0;font-size:.85rem">Enter the passcode you set as TRADER_PASSCODE on the server.</p>
 </div>
@@ -58,7 +66,8 @@ th:first-child,td:first-child{text-align:left}
 </div>
 <script>
 "use strict";
-const $=id=>document.getElementById(id),SY=["AAPL","AXP","GOOGL","KO","BAC"];
+const $=id=>document.getElementById(id),DEFAULT_SY=["AAPL","AXP","GOOGL","KO","BAC"];
+let SY=(()=>{try{const v=JSON.parse(localStorage.getItem("liveWatch"));return Array.isArray(v)&&v.length?v:DEFAULT_SY}catch(e){return DEFAULT_SY}})();
 // risk limits mirror trader-risk / trader-budget defaults and apply to every horizon
 const RISK={cashBuffer:0.10,maxPosPct:0.25};
 const H={
@@ -66,7 +75,7 @@ const H={
     mode:"dip",win:30,minSamples:15,entryZ:-1.3,exitZ:0.3,takeProfit:0.0015,stop:-0.0025,maxHoldMs:3*60e3,cooldownMs:20e3,maxSpread:0.0025,maxPositions:4,maxTradesPerDay:150,pollMs:2000,acctEvery:3},
   medium:{label:"Medium term",note:"Swing trades: buys bigger dips (z-score -2 over the last hour) and holds for hours to 3 days: +1.5% take profit, -1% stop, 3-day time stop. Checks every 30 seconds.",
     mode:"dip",win:120,minSamples:60,entryZ:-2,exitZ:1,takeProfit:0.015,stop:-0.01,maxHoldMs:3*864e5,cooldownMs:30*60e3,maxSpread:0.003,maxPositions:4,maxTradesPerDay:40,pollMs:30000,acctEvery:1},
-  long:{label:"Long term",note:"Buy and hold: builds a Berkshire-style portfolio (the copycat targets, capped at 25% a stock, 10% cash) and then only rebalances when a stock drifts 5 points off target. No stop-loss. Checks every 30 seconds.",
+  long:{label:"Long term",note:"Buy and hold: builds a portfolio of your stocks (the Berkshire copycat weights for the default list, equal weights for your own list; capped at 25% a stock, 10% cash) and then only rebalances when a stock drifts 5 points off target. No stop-loss. Checks every 30 seconds.",
     mode:"hold",band:5,maxTradesPerDay:400,pollMs:30000,acctEvery:1,minSamples:0,win:2}};
 const WEIGHTS=[30.67,23.85,17.56,15.11,12.80]; // AAPL AXP GOOGL KO BAC, from the skills' bundled 13F data
 let P=Object.assign({},RISK,H.short);
@@ -95,13 +104,14 @@ function stats(a){
 const riskNoted={};
 // long term: copy the target weights, build the positions in steps, rebalance only outside the band
 function targetWeights(capFrac){
-  let w=WEIGHTS.map(x=>x/100),capped=new Set();
+  const WT=SY.join()===DEFAULT_SY.join()?WEIGHTS:SY.map(()=>100/SY.length);
+  let w=WT.map(x=>x/100),capped=new Set();
   for(let i=0;i<10;i++){
     let over=false;
     w.forEach((x,k)=>{if(!capped.has(k)&&x>capFrac+1e-9){w[k]=capFrac;capped.add(k);over=true}});
     if(!over)break;
-    const fixed=[...capped].reduce((t,k)=>t+w[k],0),free=w.reduce((t,x,k)=>capped.has(k)?t:t+WEIGHTS[k]/100,0);
-    w=w.map((x,k)=>capped.has(k)?x:WEIGHTS[k]/100/free*(1-fixed));
+    const fixed=[...capped].reduce((t,k)=>t+w[k],0),free=w.reduce((t,x,k)=>capped.has(k)?t:t+WT[k]/100,0);
+    w=w.map((x,k)=>capped.has(k)?x:WT[k]/100/free*(1-fixed));
   }
   return w;
 }
@@ -139,7 +149,9 @@ function zscore(s){
   return sd>0?(h[h.length-1]-m)/sd:0;
 }
 function persist(){try{localStorage.setItem("liveEntered",JSON.stringify(entered))}catch(e){}}
+const selling={}; // a sell takes a moment to fill; do not send another for the same stock in the meantime
 async function order(body,why){
+  if(body.side==="sell"){if(selling[body.symbol]&&Date.now()-selling[body.symbol]<20000)return false;selling[body.symbol]=Date.now()}
   try{const r=await api("order",{method:"POST",body:JSON.stringify(body)});trades++;
     log(`${body.side.toUpperCase()} ${body.symbol} ${body.notional?"$"+body.notional:body.qty+" sh"} (${why}) -> ${r.status}`,"pos");return true}
   catch(e){log(`order refused ${body.side} ${body.symbol}: ${e.message}`,"neg");return false}
@@ -148,7 +160,7 @@ async function tick(){
   if(busy)return;busy=true;
   try{
     const needAcct=!acct||ticks++%P.acctEvery===0;
-    const [q,a]=await Promise.all([api("quotes"),needAcct?api("account"):Promise.resolve(acct)]);
+    const [q,a]=await Promise.all([api("quotes?symbols="+SY.join(",")),needAcct?api("account"):Promise.resolve(acct)]);
     acct=a;if(startEq==null)startEq=a.equity;
     const now=Date.now(),rows=[];
     for(const s of SY){
@@ -184,6 +196,22 @@ async function tick(){
   }catch(e){log("error: "+e.message,"neg");if(/passcode/.test(e.message)){stop();$("go").disabled=false}}
   busy=false;
 }
+function setWatch(list,why){
+  if(run){log("pause trading before changing the stock list","neg");return false}
+  const clean=[...new Set(list.map(x=>String(x).trim().toUpperCase()).filter(x=>/^[A-Z][A-Z0-9.\-]{0,9}$/.test(x)))].slice(0,10);
+  if(!clean.length){log("no valid tickers in that list","neg");return false}
+  SY=clean;hist={};last={};SY.forEach(x=>hist[x]=[]);cool={};
+  try{localStorage.setItem("liveWatch",JSON.stringify(SY))}catch(e){}
+  $("watch").value=SY.join(", ");log("trading list: "+SY.join(", ")+(why?" ("+why+")":""));if(acct)tick();return true;
+}
+$("watch").value=SY.join(", ");
+$("setWatch").onclick=()=>setWatch($("watch").value.split(/[\s,]+/),"your list");
+$("watch").onkeydown=e=>{if(e.key==="Enter")$("setWatch").click()};
+$("inPlay").onclick=async()=>{
+  try{const r=await fetch("/api/scan"),j=await r.json();if(!r.ok)throw new Error(j.error||r.status);
+    setWatch(j.rows.slice(0,5).map(x=>x.symbol),"top 5 by unusual volume"+(j.session==="live"?"":", last session"))}
+  catch(e){log("stocks in play unavailable: "+e.message,"neg")}
+};
 function stop(){run=false;$("toggle").textContent="Start trading";}
 function startPolling(){clearInterval(timer);if(acct)timer=setInterval(tick,P.pollMs)}
 function setHorizon(k){
